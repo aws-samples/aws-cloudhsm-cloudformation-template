@@ -33,8 +33,7 @@ Parameters:
       - t2.large
     Default: t2.medium
     Description: >-
-      Leave Blank if in production. Enter t2.micro, t2.medium, t2.large for your
-      test instance.
+      Enter t2.medium, t2.large. The EC2 instance is a critical component for automating the provisioning.
   ImageId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs
@@ -646,10 +645,10 @@ Resources:
               export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password "ch@ng3m3quick" --trust-anchor-certificate file://customerCA.crt --region $region | jq '.CustomKeyStoreId')
               
               # Connect KMS to CloudHSM
-              aws kms connect-custom-key-store --custom-key-store-id $custom_key_store_id
+              aws kms connect-custom-key-store --custom-key-store-id $custom_key_store_id --region $region
 
               # Wait for KMS to connect to CloudHSM
-              while [[ -z $(aws kms describe-custom-key-stores --custom-key-store-id $custom_key_store_id | egrep 'CONNECTED')]];do
+              while [[ -z $(aws kms describe-custom-key-stores --custom-key-store-id $custom_key_store_id --region $region | egrep 'CONNECTED') ]];do
                 echo "Waiting for KMS to connect to CloudHSM..."
                 sleep 30
               done
