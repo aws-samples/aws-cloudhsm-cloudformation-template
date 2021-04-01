@@ -607,6 +607,10 @@ Resources:
               aws ec2 authorize-security-group-ingress --group-id $security_group --source-group $instance_group --protocol all --region $region
               sudo /opt/cloudhsm/bin/configure -a `cat hsm_ip.txt`
               sudo systemctl start cloudhsm-client.service
+              
+              # Give cloudhsm-client service time to startup
+              sleep 5
+              
               { time ./cHSM.expect ; } 2> /home/ec2-user/cHSM-time.txt
               { time ./CreateKMSUser.expect ; } 2> /home/ec2-user/CreateKMSUser-time.txt
 
@@ -642,13 +646,14 @@ Resources:
               done
 
               # Create a custom key store and store custom_key_store_id
-              export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password "ch@ng3m3quick" --trust-anchor-certificate file://customerCA.crt --region $region | jq '.CustomKeyStoreId')
+              export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password "ch@ng3m3quick" --trust-anchor-certificate file://customerCA.crt --region $region | jq -r '.CustomKeyStoreId')
+              echo "custom_key_store_id: $custom_key_store_id"
               
               # Connect KMS to CloudHSM
               aws kms connect-custom-key-store --custom-key-store-id $custom_key_store_id --region $region
 
               # Wait for KMS to connect to CloudHSM
-              while [[ -z $(aws kms describe-custom-key-stores --custom-key-store-id $custom_key_store_id --region $region | egrep 'CONNECTED') ]];do
+              while [[ -z $(aws kms describe-custom-key-stores --custom-key-store-id $custom_key_store_id --region $region | egrep '\bCONNECTED\b') ]];do
                 echo "Waiting for KMS to connect to CloudHSM..."
                 sleep 30
               done
