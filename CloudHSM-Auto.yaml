@@ -152,7 +152,74 @@ Resources:
   StepFunctionDeleteCluster:
     Type: 'AWS::StepFunctions::StateMachine'
     Properties:
-      DefinitionString: !Sub "{\r\n    \"Comment\": \"Deletes CloudHSM cluster as provided by PhysicalResourceId\",\r\n    \"StartAt\": \"GetClusterInfo\",\r\n    \"States\": {\r\n        \"GetClusterInfo\": {\r\n            \"Type\": \"Pass\",\r\n            \"Next\": \"DeleteHSM\"\r\n        },\r\n        \"DeleteHSM\": {\r\n            \"Type\": \"Task\",\r\n            \"Resource\": \"arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeleteHSMs}\",\r\n            \"Next\": \"wait_for_HSMs\",\r\n\t\t\t\"ResultPath\": \"$.hsms\"\r\n        },\r\n        \"wait_for_HSMs\": {\r\n            \"Type\": \"Wait\",\r\n            \"Seconds\": 30,\r\n            \"Next\": \"GetHSMStatus\"\r\n        },\r\n        \"GetHSMStatus\": {\r\n            \"Type\": \"Task\",\r\n            \"Resource\": \"arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CheckHSMStatus}\",\r\n            \"Next\": \"HSMReady?\",\r\n            \"ResultPath\": \"$.HSMstatus\"\r\n        },\r\n        \"HSMReady?\": {\r\n            \"Type\": \"Choice\",\r\n            \"Choices\": [\r\n                {\r\n                    \"Variable\": \"$.HSMstatus\",\r\n                    \"StringEquals\": \"DELETED\",\r\n                    \"Next\": \"DeleteCluster\"\r\n                }\r\n            ],\r\n            \"Default\": \"wait_for_HSMs\"\r\n        },\r\n        \"DeleteCluster\": {\r\n            \"Type\": \"Task\",\r\n            \"Resource\": \"arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeleteCluster}\",\r\n            \"Next\": \"wait_for_cluster\",\r\n            \"ResultPath\": \"$.cluster\"\r\n        },\r\n        \"wait_for_cluster\": {\r\n            \"Type\": \"Wait\",\r\n            \"Seconds\": 30,\r\n            \"Next\": \"GetClusterStatus\"\r\n        },\r\n        \"GetClusterStatus\": {\r\n            \"Type\": \"Task\",\r\n            \"Resource\": \"arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${GetClusterStatus}\",\r\n            \"Next\": \"ClusterReady?\",\r\n            \"ResultPath\": \"$.Clusterstatus\"\r\n        },\r\n        \"ClusterReady?\": {\r\n            \"Type\": \"Choice\",\r\n            \"Choices\": [\r\n                {\r\n                    \"Variable\": \"$.Clusterstatus\",\r\n                    \"StringEquals\": \"DELETED\",\r\n                    \"Next\": \"RespondToCFN\"\r\n                }\r\n            ],\r\n            \"Default\": \"wait_for_cluster\"\r\n        },\r\n        \"RespondToCFN\": {\r\n            \"Type\": \"Task\",\r\n            \"Resource\": \"arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CFNRespond}\",\r\n            \"End\": true\r\n        }\r\n    }\r\n}"
+      DefinitionString: !Sub |-
+        {
+          "Comment": "Deletes CloudHSM cluster as provided by PhysicalResourceId",
+          "StartAt": "GetClusterInfo",
+          "States": {
+            "GetClusterInfo": {
+              "Type": "Pass",
+              "Next": "DeleteHSM"
+            },
+            "DeleteHSM": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeleteHSMs}",
+              "Next": "wait_for_HSMs",
+        		  "ResultPath": "$.hsms"
+            },
+            "wait_for_HSMs": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "GetHSMStatus"
+            },
+            "GetHSMStatus": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CheckHSMStatus}",
+              "Next": "HSMReady?",
+              "ResultPath": "$.HSMstatus"
+            },
+            "HSMReady?": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.HSMstatus",
+                "StringEquals": "DELETED",
+                "Next": "DeleteCluster"
+              }],
+              "Default": "wait_for_HSMs"
+            },
+            "DeleteCluster": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeleteCluster}",
+              "Next": "wait_for_cluster",
+              "ResultPath": "$.cluster"
+            },
+            "wait_for_cluster": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "GetClusterStatus"
+            },
+            "GetClusterStatus": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${GetClusterStatus}",
+              "Next": "ClusterReady?",
+              "ResultPath": "$.Clusterstatus"
+            },
+            "ClusterReady?": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.Clusterstatus",
+                "StringEquals": "DELETED",
+                "Next": "RespondToCFN"
+              }],
+              "Default": "wait_for_cluster"
+            },
+            "RespondToCFN": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CFNRespond}",
+              "End": true
+            }
+          }
+        }
       RoleArn: !GetAtt 
         - StatesExecutionRole
         - Arn
@@ -197,77 +264,79 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
+        ZipFile: |
+          import boto3
+          import json
+          import time
+          import os
+          from botocore.vendored import requests
+          SFN = boto3.client('stepfunctions')
 
-          - - import boto3
-            - import json
-            - import time
-            - import os
-            - from botocore.vendored import requests
-            - SFN = boto3.client('stepfunctions')
-            - 'def lambda_handler(event, context):'
-            - ' CreatestepArn = event[''ResourceProperties''][''CreateSFN_function'']'
-            - ' DeletestepArn = event[''ResourceProperties''][''DeleteSFN_function'']'
-            - ' print(''ResponseURL is '' + str(event[''ResponseURL'']))'
-            - ' if (os.environ[''AWS_REGION''] == ''ap-northeast-3'') or (os.environ[''AWS_REGION''] == ''sa-east-1''):'
-            - '  responseStatus = ''FAILED'''
-            - '  responseData = {''Failed'': ''Unsupported Region.''}'
-            - '  time.sleep(3)'
-            - '  sendResponse(event, context, responseStatus, responseData) '
-            - ' print(''REQUEST BODY:n'' + str(event))'
-            - ' try:'
-            - '  if event[''RequestType''] == ''Delete'':'
-            - '   print(''delete'')'
-            - '   PhysicalResourceId = event[''PhysicalResourceId'']'
-            - '   print(''Trying to invoke '' + str(DeletestepArn) + '' to delete Cluster'')'
-            - '   response = SFN.describe_state_machine(stateMachineArn=str(DeletestepArn))'
-            - '   print(response)'
-            - '   SFN.start_execution(stateMachineArn=DeletestepArn,input=json.dumps(event))'
-            - '   return 0'
-            - '  elif event[''RequestType''] == ''Create'':'
-            - '   print(''create'')'
-            - '   #The rest of your create logic goes here'
-            - '   print(''Trying to invoke '' + str(CreatestepArn) + '' to create Cluster'')'
-            - '   print(SFN.describe_state_machine(stateMachineArn=CreatestepArn))'
-            - '   SFN.start_execution(stateMachineArn=CreatestepArn,input=json.dumps(event))'
-            - '   return 0'
-            - '  elif event[''RequestType''] == ''Update'':'
-            - '   print(''update'')'
-            - '   print(''Update not supported for now'')'
-            - '   PhysicalResourceId = event[''PhysicalResourceId'']'
-            - '   sendResponse(event, context, ''SUCCESS'', {''cluster_id'': PhysicalResourceId}, None, PhysicalResourceId)'
-            - '  responseStatus = ''SUCCESS'''
-            - '  responseData = {''Success'': ''Everything worked.''}'
-            - ' except:'
-            - '  responseStatus = ''FAILED'''
-            - '  responseData = {''Failed'': ''Something bad happened.''}'
-            - '  time.sleep(3)'
-            - ' sendResponse(event, context, responseStatus, responseData)'
-            - >-
-              def sendResponse(event, context, responseStatus, responseData,
-              reason=None, physical_resource_id=None):
-            - ' responseBody = {''Status'': responseStatus,'
-            - '     ''Reason'': ''See the details in CloudWatch Log Stream: '' + context.log_stream_name,'
-            - '     ''PhysicalResourceId'': physical_resource_id or context.log_stream_name,'
-            - '     ''StackId'': event[''StackId''],'
-            - '     ''RequestId'': event[''RequestId''],'
-            - '     ''LogicalResourceId'': event[''LogicalResourceId''],'
-            - '     ''Data'': responseData}'
-            - ' print(''RESPONSE BODY:/n'' + json.dumps(responseBody))'
-            - ' responseUrl = event[''ResponseURL'']'
-            - ' json_responseBody = json.dumps(responseBody)'
-            - ' headers = {'
-            - '  ''content-type'' : '''','
-            - '  ''content-length'' : str(len(json_responseBody))'
-            - ' }'
-            - ' try:'
-            - '  response = requests.put(responseUrl,'
-            - '        data=json_responseBody,'
-            - '        headers=headers)'
-            - '  print(''Status code: '' + response.reason)'
-            - ' except Exception as e:'
-            - '  print(''send(..) failed executing requests.put(..): '' + str(e))'
+          def lambda_handler(event, context):
+              CreatestepArn = event['ResourceProperties']['CreateSFN_function']
+              DeletestepArn = event['ResourceProperties']['DeleteSFN_function']
+              print('ResponseURL is ' + str(event['ResponseURL']))
+              if (os.environ['AWS_REGION'] == 'ap-northeast-3') or (os.environ['AWS_REGION'] == 'sa-east-1'):
+                  responseStatus = 'FAILED'
+                  responseData = {'Failed': 'Unsupported Region.'}
+                  time.sleep(3)
+                  sendResponse(event, context, responseStatus, responseData)
+              print('REQUEST BODY:n' + str(event))
+              try:
+                  if event['RequestType'] == 'Delete':
+                      print('delete')
+                      PhysicalResourceId = event['PhysicalResourceId']
+                      print('Trying to invoke ' + str(DeletestepArn) + ' to delete Cluster')
+                      response = SFN.describe_state_machine(stateMachineArn=str(DeletestepArn))
+                      print(response)
+                      SFN.start_execution(stateMachineArn=DeletestepArn,input=json.dumps(event))
+                      return 0
+                  elif event['RequestType'] == 'Create':
+                      print('create')
+                      #The rest of your create logic goes here
+                      print('Trying to invoke ' + str(CreatestepArn) + ' to create Cluster')
+                      print(SFN.describe_state_machine(stateMachineArn=CreatestepArn))
+                      SFN.start_execution(stateMachineArn=CreatestepArn,input=json.dumps(event))
+                      return 0
+                  elif event['RequestType'] == 'Update':
+                      print('update')
+                      print('Update not supported.')
+                      PhysicalResourceId = event['PhysicalResourceId']
+                      sendResponse(event, context, 'SUCCESS', {'cluster_id': PhysicalResourceId}, None, PhysicalResourceId)
+                  responseStatus = 'SUCCESS'
+                  responseData = {'Success': 'Everything worked.'}
+              except:
+                  responseStatus = 'FAILED'
+                  responseData = {'Failed': 'Something bad happened.'}
+                  time.sleep(3)
+              
+              sendResponse(event, context, responseStatus, responseData)
+
+          def sendResponse(event, context, responseStatus, responseData, reason=None, physical_resource_id=None):
+              responseBody = {
+                  'Status': responseStatus,
+                  'Reason': 'See the details in CloudWatch Log Stream: ' + context.log_stream_name,
+                  'PhysicalResourceId': physical_resource_id or context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': responseData
+              }
+
+              print('RESPONSE BODY:/n' + json.dumps(responseBody))
+              responseUrl = event['ResponseURL']
+              json_responseBody = json.dumps(responseBody)
+
+              headers = {
+                'content-type' : '',
+                'content-length' : str(len(json_responseBody))
+              }
+
+              try:
+                  response = requests.put(responseUrl, data=json_responseBody, headers=headers)
+                  print('Status code: ' + response.reason)
+              except Exception as e:
+                  print('send(..) failed executing requests.put(..): ' + str(e))
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
@@ -278,27 +347,33 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
+        ZipFile:
+          Fn::Sub:
+            - |
+              import json
+              import boto3
+              HSM = boto3.client('cloudhsmv2')
+              EC2 = boto3.client('ec2')
+              def lambda_handler(event, context):
+                  print(event)
+                  target_vpc = event['ResourceProperties']['VPC_Id']
+                  subnets_and_az = dict()
+                  vpc_info = EC2.describe_subnets(Filters=[{
+                    'Name': 'vpc-id',
+                    'Values': [target_vpc]
+                  }])
 
-          - - import json
-            - import boto3
-            - HSM = boto3.client('cloudhsmv2')
-            - EC2 = boto3.client('ec2')
-            - 'def lambda_handler(event, context):'
-            - ' print(event)'
-            - ' target_vpc = event[''ResourceProperties''][''VPC_Id'']'
-            - ' #subnets = []'
-            - ' subnets_and_az = dict()'
-            - ' vpc_info = EC2.describe_subnets(Filters=[{''Name'': ''vpc-id'', ''Values'': [target_vpc]}])'
-            - ' for subnet in vpc_info[''Subnets'']:'
-            - '  subnets_and_az[subnet[''AvailabilityZone'']] = subnet[''SubnetId'']'
-            - ' subnets = list(subnets_and_az.values())'
-            - ' # At most one subnet is allowed per availability zone when creating cluster.'
-            - ' print(''Subnets '' + str(subnets) + '' are unique per-az found in the VPC '' + str(target_vpc))'
-            - ' Cluster = HSM.create_cluster(SubnetIds=subnets,HsmType=''hsm1.medium'')'
-            - ' cluster_id = Cluster[''Cluster''][''ClusterId'']'
-            - ' return cluster_id'
+                  for subnet in vpc_info['Subnets']:
+                      subnets_and_az[subnet['AvailabilityZone']] = subnet['SubnetId']
+
+                  subnets = list(subnets_and_az.values())
+                  # At most one subnet is allowed per availability zone when creating cluster.
+                  print('Subnets ' + str(subnets) + ' are unique per-az found in the VPC ' + str(target_vpc))
+                  Cluster = HSM.create_cluster(SubnetIds=subnets,HsmType='hsm1.medium')
+                  cluster_id = Cluster['Cluster']['ClusterId']
+
+                  return cluster_id
+            - {}
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
@@ -309,27 +384,26 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
+        ZipFile: |
+            import json
+            import boto3
+            HSM = boto3.client('cloudhsmv2')
 
-          - - import json
-            - import boto3
-            - HSM = boto3.client('cloudhsmv2')
-            - 'def lambda_handler(event, context):'
-            - ' print(event)'
-            - ' if event[''RequestType''] == ''Create'':'
-            - '  cluster_id = event[''cluster_id'']'
-            - '  cluster = HSM.describe_clusters(Filters={''clusterIds'': [cluster_id]})'
-            - '  print(''Finding state for cluster '' + str(cluster))'
-            - '  return cluster[''Clusters''][0][''State'']'
-            - ' elif event[''RequestType''] == ''Delete'':'
-            - '  cluster_id = event[''PhysicalResourceId'']'
-            - '  print(''Finding state for Physical Resource '' + str(cluster_id))'
-            - '  cluster = HSM.describe_clusters(Filters={''clusterIds'': [cluster_id]})'
-            - '  if not cluster[''Clusters'']:'
-            - '   return ''DELETED'''
-            - '  else:'
-            - '   return cluster[''Clusters''][0][''State'']'
+            def lambda_handler(event, context):
+                print(event)
+                if event['RequestType'] == 'Create':
+                    cluster_id = event['cluster_id']
+                    cluster = HSM.describe_clusters(Filters={'clusterIds': [cluster_id]})
+                    print('Finding state for cluster ' + str(cluster))
+                    return cluster['Clusters'][0]['State']
+                elif event['RequestType'] == 'Delete':
+                    cluster_id = event['PhysicalResourceId']
+                    print('Finding state for Physical Resource ' + str(cluster_id))
+                    cluster = HSM.describe_clusters(Filters={'clusterIds': [cluster_id]})
+                    if not cluster['Clusters']:
+                        return 'DELETED'
+                    else:
+                        return cluster['Clusters'][0]['State']
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
@@ -340,35 +414,34 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
+        ZipFile: |
+          import json
+          import boto3
+          HSM = boto3.client('cloudhsmv2')
 
-          - - import json
-            - import boto3
-            - HSM = boto3.client('cloudhsmv2')
-            - 'def lambda_handler(event, context):'
-            - ' print(event)'
-            - ' target_vpc = event[''ResourceProperties''][''VPC_Id'']'
-            - ' cluster_id = event[''cluster_id'']'
-            - ' az_names= []'
-            - ' cluster_info = HSM.describe_clusters(Filters={''clusterIds'': [cluster_id]})'
-            - ' print(cluster_info)'
-            - ' for az in cluster_info[''Clusters''][0][''SubnetMapping'']:'
-            - '  az_names.append(az)'
-            - ' print(''AZs '' + str(az_names) + '' are found in the VPC '' + str(target_vpc))'
-            - ' try:'
-            - '  hsm_device = HSM.create_hsm(ClusterId=cluster_id,AvailabilityZone=az_names[0])'
-            - '  print(hsm_device)'
-            - '  return hsm_device[''Hsm''][''HsmId'']'
-            - ' except HSM.exceptions.CloudHsmServiceException as e: # Exception as e:'
-            - '  print(e)'
-            - '  print(''Trying to create HSM in AZ '' + str(az_names[1]) + '' instead.'')'
-            - '  try:'
-            - '   hsm_device = HSM.create_hsm(ClusterId=cluster_id,AvailabilityZone=az_names[1])'
-            - '   print(hsm_device)'
-            - '  except HSM.exceptions.CloudHsmServiceException as f:'
-            - '   print(f)'
-            - '   print(''Failed in 2 AZs - exiting with no HSM deployed'')'
+          def lambda_handler(event, context):
+              print(event)
+              target_vpc = event['ResourceProperties']['VPC_Id']
+              cluster_id = event['cluster_id']
+              az_names= []
+              cluster_info = HSM.describe_clusters(Filters={'clusterIds': [cluster_id]})
+              print(cluster_info)
+              for az in cluster_info['Clusters'][0]['SubnetMapping']:
+                  az_names.append(az)
+              print('AZs ' + str(az_names) + ' are found in the VPC ' + str(target_vpc))
+              try:
+                  hsm_device = HSM.create_hsm(ClusterId=cluster_id,AvailabilityZone=az_names[0])
+                  print(hsm_device)
+                  return hsm_device['Hsm']['HsmId']
+              except HSM.exceptions.CloudHsmServiceException as e: # Exception as e:
+                  print(e)
+                  print('Trying to create HSM in AZ ' + str(az_names[1]) + ' instead.')
+                  try:
+                      hsm_device = HSM.create_hsm(ClusterId=cluster_id,AvailabilityZone=az_names[1])
+                      print(hsm_device)
+                  except HSM.exceptions.CloudHsmServiceException as f:
+                      print(f)
+                      print('Failed in 2 AZs - exiting with no HSM deployed')
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
@@ -379,33 +452,32 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
+        ZipFile: |
+          import json
+          import boto3
+          HSM = boto3.client('cloudhsmv2')
 
-          - - import json
-            - import boto3
-            - HSM = boto3.client('cloudhsmv2')
-            - 'def lambda_handler(event, context):'
-            - ' print(event)'
-            - ' states = dict()'
-            - ' if event[''RequestType''] == ''Create'':'
-            - '  cluster_id = event[''cluster_id'']'
-            - '  cluster = HSM.describe_clusters(Filters={''clusterIds'': [cluster_id]})'
-            - '  print(cluster)'
-            - '  hsm = cluster[''Clusters''][0][''Hsms''][0]'
-            - '  print(hsm)'
-            - '  print(hsm[''State''])'
-            - '  return hsm[''State'']'
-            - ' elif event[''RequestType''] == ''Delete'':'
-            - '  cluster_id = event[''PhysicalResourceId'']'
-            - '  cluster = HSM.describe_clusters(Filters={''clusterIds'': [cluster_id]})'
-            - '  print(cluster)'
-            - '  if not cluster[''Clusters''][0][''Hsms'']:'
-            - '   return ''DELETED'''
-            - '  else:'
-            - '   for hsm in cluster[''Clusters''][0][''Hsms'']:'
-            - '    states[hsm[''HsmId'']] = hsm[''State'']'
-            - ' return states'
+          def lambda_handler(event, context):
+              print(event)
+              states = dict()
+              if event['RequestType'] == 'Create':
+                  cluster_id = event['cluster_id']
+                  cluster = HSM.describe_clusters(Filters={'clusterIds': [cluster_id]})
+                  print(cluster)
+                  hsm = cluster['Clusters'][0]['Hsms'][0]
+                  print(hsm)
+                  print(hsm['State'])
+                  return hsm['State']
+              elif event['RequestType'] == 'Delete':
+                  cluster_id = event['PhysicalResourceId']
+                  cluster = HSM.describe_clusters(Filters={'clusterIds': [cluster_id]})
+                  print(cluster)
+                  if not cluster['Clusters'][0]['Hsms']:
+                      return 'DELETED'
+                  else:
+                      for hsm in cluster['Clusters'][0]['Hsms']:
+                          states[hsm['HsmId']] = hsm['State']
+                      return states
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
@@ -416,18 +488,16 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
-
-          - - import json
-            - import boto3
-            - HSM = boto3.client('cloudhsmv2')
-            - 'def lambda_handler(event, context):'
-            - ' print(event)'
-            - ' cluster_id = event[''PhysicalResourceId'']'
-            - ' print(''Deleting Cluster '' + str(cluster_id))'
-            - ' HSM.delete_cluster(ClusterId=cluster_id)'
-            - ' return {''Deleting'': cluster_id}'
+        ZipFile: |
+          import json
+          import boto3
+          HSM = boto3.client('cloudhsmv2')
+          def lambda_handler(event, context):
+              print(event)
+              cluster_id = event['PhysicalResourceId']
+              print('Deleting Cluster ' + str(cluster_id))
+              HSM.delete_cluster(ClusterId=cluster_id)
+              return {'Deleting': cluster_id}
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
@@ -438,23 +508,22 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
+        ZipFile: |
+          import json
+          import boto3
+          HSM = boto3.client('cloudhsmv2')
 
-          - - import json
-            - import boto3
-            - HSM = boto3.client('cloudhsmv2')
-            - 'def lambda_handler(event, context):'
-            - '    print(event)'
-            - '    cluster_id = event[''PhysicalResourceId'']'
-            - '    cluster_info = HSM.describe_clusters(Filters={''clusterIds'': [cluster_id]})'
-            - '    print(cluster_info)'
-            - '    hsms = []'
-            - '    for hsm in cluster_info[''Clusters''][0][''Hsms'']:'
-            - '        print(''Deleting HSM '' + str(hsm[''HsmId'']))'
-            - '        hsms.append(hsm[''HsmId''])'
-            - '        HSM.delete_hsm(ClusterId=cluster_id,HsmId=hsm[''HsmId''])'
-            - '    return {''Deleting'': hsms}'
+          def lambda_handler(event, context):
+              print(event)
+              cluster_id = event['PhysicalResourceId']
+              cluster_info = HSM.describe_clusters(Filters={'clusterIds': [cluster_id]})
+              print(cluster_info)
+              hsms = []
+              for hsm in cluster_info['Clusters'][0]['Hsms']:
+                  print('Deleting HSM ' + str(hsm['HsmId']))
+                  hsms.append(hsm['HsmId'])
+                  HSM.delete_hsm(ClusterId=cluster_id,HsmId=hsm['HsmId'])
+              return {'Deleting': hsms}
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
@@ -465,55 +534,61 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile: !Join 
-          - |+
+        ZipFile: |
+          import json
+          from botocore.vendored import requests
 
-          - - import json
-            - from botocore.vendored import requests
-            - 'def lambda_handler(event, context):'
-            - ' if event[''RequestType''] == ''Create'':'
-            - '  cluster_id = event[''cluster_id'']'
-            - '  if event[''HSMstatus''] == ''ACTIVE'':'
-            - '   print(''Responding to CloudFormation with SUCCESS'')'
-            - '   sendResponse(event, context, ''SUCCESS'', {''cluster_id'': event[''cluster_id''], ''hsm_id'': event[''hsm_id'']}, None, cluster_id)'
-            - '  else:'
-            - '   print(''Responding to CloudFormation with FAILED'')'
-            - '   sendResponse(event, context, ''FAILED'', {''cluster_id'': event[''cluster_id''], ''hsm_id'': event[''hsm_id'']}, None, cluster_id)'
-            - '  return'
-            - ' elif event[''RequestType''] == ''Delete'':'
-            - '  cluster_id = event[''PhysicalResourceId'']'
-            - '  sendResponse(event, context, ''SUCCESS'', {''cluster_id'': cluster_id}, None, cluster_id)'
-            - '  return'
-            - >-
-              def sendResponse(event, context, responseStatus, responseData,
-              reason=None, physical_resource_id=None):
-            - ' responseBody = {''Status'': responseStatus,'
-            - '     ''Reason'': ''See the details in CloudWatch Log Stream: '' + context.log_stream_name,'
-            - '     ''PhysicalResourceId'': physical_resource_id or context.log_stream_name,'
-            - '     ''StackId'': event[''StackId''],'
-            - '     ''RequestId'': event[''RequestId''],'
-            - '     ''LogicalResourceId'': event[''LogicalResourceId''],'
-            - '     ''Data'': responseData}'
-            - ' print(''RESPONSE BODY:/n'' + json.dumps(responseBody))'
-            - ' responseUrl = event[''ResponseURL'']'
-            - ' json_responseBody = json.dumps(responseBody)'
-            - ' headers = {'
-            - '  ''content-type'' : '''','
-            - '  ''content-length'' : str(len(json_responseBody))'
-            - ' }'
-            - ' try:'
-            - '  response = requests.put(responseUrl,'
-            - '        data=json_responseBody,'
-            - '        headers=headers)'
-            - '  print(''Status code: '' + response.reason)'
-            - ' except Exception as e:'
-            - '  print(''send(..) failed executing requests.put(..): '' + str(e))'
+          def lambda_handler(event, context):
+              if event['RequestType'] == 'Create':
+                  cluster_id = event['cluster_id']
+                  if event['HSMstatus'] == 'ACTIVE':
+                      print('Responding to CloudFormation with SUCCESS')
+                      sendResponse(event, context, 'SUCCESS', {'cluster_id': cluster_id, 'hsm_id': event['hsm_id']}, None, cluster_id)
+                  else:
+                      print('Responding to CloudFormation with FAILED')
+                      sendResponse(event, context, 'FAILED', {'cluster_id': cluster_id, 'hsm_id': event['hsm_id']}, None, cluster_id)
+                  return
+              elif event['RequestType'] == 'Delete':
+                  cluster_id = event['PhysicalResourceId']
+                  sendResponse(event, context, 'SUCCESS', {'cluster_id': cluster_id}, None, cluster_id)
+                  return
+
+          def sendResponse(event, context, responseStatus, responseData, reason=None, physical_resource_id=None):
+              responseBody = {
+                  'Status': responseStatus,
+                  'Reason': 'See the details in CloudWatch Log Stream: ' + context.log_stream_name,
+                  'PhysicalResourceId': physical_resource_id or context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': responseData
+              }
+
+              print('RESPONSE BODY:/n' + json.dumps(responseBody))
+              responseUrl = event['ResponseURL']
+              json_responseBody = json.dumps(responseBody)
+
+              headers = {
+                  'content-type' : '',
+                  'content-length' : str(len(json_responseBody))
+              }
+
+              try:
+                  response = requests.put(responseUrl, data=json_responseBody, headers=headers)
+                  print('Status code: ' + response.reason)
+              except Exception as e:
+                  print('send(..) failed executing requests.put(..): ' + str(e))
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: '20'
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
+  ClientInstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Client Instance Security Group
+      VpcId: !Ref VPCInput
   ClientInstance:
     Type: 'AWS::EC2::Instance'
     DependsOn: CloudHSMCluster
@@ -526,6 +601,9 @@ Resources:
       ImageId: !Ref ImageId
       IamInstanceProfile: !Ref ClientInstanceProfile
       SubnetId: !Ref ClientInstanceSubnet
+      SecurityGroupIds: [
+        !Ref ClientInstanceSecurityGroup
+      ]
       Tags:
         - Key: Name
           Value: !Sub
@@ -536,6 +614,8 @@ Resources:
           Fn::Sub:
             - |
               #!/bin/bash
+
+              echo "Start client instance user script: `date`"
               sudo yum update -y
               sleep 10
               sudo yum install jq expect wget curl openssl -y
@@ -600,11 +680,11 @@ Resources:
               echo Cluster Initialized!
               aws cloudhsmv2  describe-clusters --filters clusterIds=$cluster_id --query "Clusters[0].Hsms[0].EniIp" --output text --region $region > hsm_ip.txt
 
+              # Setup inbound rule to allow EC2 instance security group to access HSM
               export instance_group=$(aws ec2 describe-instances --instance-ids $instance_id --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $region)
-
               export security_group=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query Clusters[*].SecurityGroup[] --output text --region $region)
-
               aws ec2 authorize-security-group-ingress --group-id $security_group --source-group $instance_group --protocol all --region $region
+              
               sudo /opt/cloudhsm/bin/configure -a `cat hsm_ip.txt`
               sudo systemctl start cloudhsm-client.service
               
@@ -613,9 +693,6 @@ Resources:
               
               { time ./cHSM.expect ; } 2> /home/ec2-user/cHSM-time.txt
               { time ./CreateKMSUser.expect ; } 2> /home/ec2-user/CreateKMSUser-time.txt
-
-              # Next steps are creating a another HSM for KMS
-              export available_az=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --region $region --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[0].AvailabilityZone ] | .[0]' | jq -r '.')
 
               # Wait for Cluster to become Active
               export c_init=""
@@ -646,6 +723,7 @@ Resources:
               done
 
               # Create a custom key store and store custom_key_store_id
+              echo "custom key store id part of user script: `date`"
               export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password "ch@ng3m3quick" --trust-anchor-certificate file://customerCA.crt --region $region | jq -r '.CustomKeyStoreId')
               echo "custom_key_store_id: $custom_key_store_id"
               
@@ -665,6 +743,7 @@ Resources:
     Type: 'AWS::IAM::Role'
     DependsOn: CloudHSMCluster
     Properties:
+      MaxSessionDuration: 7200
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
       AssumeRolePolicyDocument:
@@ -715,7 +794,7 @@ Resources:
       Roles:
         - !Ref ClientInstanceRole
 Outputs:
-  ClusterId:
+  ClusterInfo:
     Description: The cluster_id value of the Cluster that has been set up
     Value: !GetAtt 
       - CloudHSMCluster
