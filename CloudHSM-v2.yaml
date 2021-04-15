@@ -83,7 +83,12 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CreateCluster}",
               "Next": "wait_for_cluster",
-              "ResultPath": "$.cluster_id"
+              "ResultPath": "$.cluster_id",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
             },
             "wait_for_cluster": {
               "Type": "Wait",
@@ -94,7 +99,12 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${GetClusterStatus}",
               "Next": "ClusterReady?",
-              "ResultPath": "$.Clusterstatus"
+              "ResultPath": "$.Clusterstatus",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
             },
             "ClusterReady?": {
               "Type": "Choice",
@@ -115,7 +125,12 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CreateHSM}",
               "Next": "wait_for_HSM",
-              "ResultPath": "$.hsm_id"
+              "ResultPath": "$.hsm_id",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
             },
             "wait_for_HSM": {
               "Type": "Wait",
@@ -126,7 +141,12 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CheckHSMStatus}",
               "Next": "HSMReady?",
-              "ResultPath": "$.HSMstatus"
+              "ResultPath": "$.HSMstatus",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
             },
             "HSMReady?": {
               "Type": "Choice",
@@ -143,7 +163,11 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CFNRespond}",
               "End": true
-            }
+            },
+            "CFNError": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CFNError}",
+              "End": true}
           }
         }
       RoleArn: !GetAtt 
@@ -165,7 +189,11 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeleteHSMs}",
               "Next": "wait_for_HSMs",
-        		  "ResultPath": "$.hsms"
+        		  "ResultPath": "$.hsms",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError"
+              }]
             },
             "wait_for_HSMs": {
               "Type": "Wait",
@@ -176,7 +204,11 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CheckHSMStatus}",
               "Next": "HSMReady?",
-              "ResultPath": "$.HSMstatus"
+              "ResultPath": "$.HSMstatus",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError"
+              }]
             },
             "HSMReady?": {
               "Type": "Choice",
@@ -191,7 +223,11 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${DeleteCluster}",
               "Next": "wait_for_cluster",
-              "ResultPath": "$.cluster"
+              "ResultPath": "$.cluster",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError"
+              }]
             },
             "wait_for_cluster": {
               "Type": "Wait",
@@ -202,7 +238,11 @@ Resources:
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${GetClusterStatus}",
               "Next": "ClusterReady?",
-              "ResultPath": "$.Clusterstatus"
+              "ResultPath": "$.Clusterstatus",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError"
+              }]
             },
             "ClusterReady?": {
               "Type": "Choice",
@@ -216,6 +256,11 @@ Resources:
             "RespondToCFN": {
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CFNRespond}",
+              "End": true
+            },
+            "CFNError": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CFNError}",
               "End": true
             }
           }
@@ -530,6 +575,23 @@ Resources:
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
+  CFNError:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+
+          def lambda_handler(event, context):
+              responseData = {}
+              cfnresponse.send(event, context, cfnresponse.FAILED, responseData, "CloudHSMCluster")
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: '20'
+      Role: !GetAtt
+        - CloudHSMLambdaExecutionRole
+        - Arn
   CFNRespond:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -618,7 +680,7 @@ Resources:
               echo "Start client instance user script: `date`"
               sudo yum update -y
               sleep 10
-              sudo yum install jq expect wget curl openssl -y
+              sudo yum install jq expect wget curl openssl amazon-cloudwatch-agent -y
 
               echo -e '#!/usr/bin/expect -f
               spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
@@ -654,6 +716,33 @@ Resources:
               expect eof' > CreateKMSUser.expect
               chmod +x CreateKMSUser.expect
 
+              echo -e '{
+                "agent": {
+                  "run_as_user": "root"
+                },
+                "logs": {
+                  "logs_collected": {
+                    "files": {
+                      "collect_list": [
+                        {
+                          "file_path": "/var/log/messages",
+                          "log_group_name": "/aws/ec2/CloudHSM-${Cluster_Id}",
+                          "log_stream_name": "messages"
+                        },
+                        {
+                          "file_path": "var/log/cloud-init-output.log",
+                          "log_group_name": "/aws/ec2/CloudHSM-${Cluster_Id}",
+                          "log_stream_name": "cloud-init-output.log"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }' > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+              chmod 644 /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+              /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a stop
+              /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
               wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-client-latest.el7.x86_64.rpm
               sudo yum install -y ./cloudhsm-client-latest.el7.x86_64.rpm
               export instance_id=$(curl 169.254.169.254/latest/meta-data/instance-id/)
@@ -678,12 +767,18 @@ Resources:
               done
 
               echo Cluster Initialized!
-              aws cloudhsmv2  describe-clusters --filters clusterIds=$cluster_id --query "Clusters[0].Hsms[0].EniIp" --output text --region $region > hsm_ip.txt
+              aws cloudhsmv2  describe-clusters --filters clusterIds=$cluster_id --query "Clusters[0].Hsms[0].EniIp" --output text --region $region > hsm_ip.txt || (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
 
               # Setup inbound rule to allow EC2 instance security group to access HSM
-              export instance_group=$(aws ec2 describe-instances --instance-ids $instance_id --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $region)
-              export security_group=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query Clusters[*].SecurityGroup[] --output text --region $region)
-              aws ec2 authorize-security-group-ingress --group-id $security_group --source-group $instance_group --protocol all --region $region
+              export instance_group=$(aws ec2 describe-instances --instance-ids $instance_id --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $region || echo failed)
+              echo "instance_group: $instance_group"
+              [[ $instance_group == 'failed' ]] && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance
+
+              export security_group=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query Clusters[*].SecurityGroup[] --output text --region $region || echo failed)
+              echo "security_group: $security_group"
+              [[ $security_group == 'failed' ]] && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance
+
+              aws ec2 authorize-security-group-ingress --group-id $security_group --source-group $instance_group --protocol all --region $region || (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;echo "Failed to configure HSM security group";exit 127)
               
               sudo /opt/cloudhsm/bin/configure -a `cat hsm_ip.txt`
               sudo systemctl start cloudhsm-client.service
@@ -703,13 +798,16 @@ Resources:
               done
 
               # Next steps are creating a another HSM for KMS
-              export available_az=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --region $region --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[0].AvailabilityZone ] | .[0]' | jq -r '.')
+              export available_az=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --region $region --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[0].AvailabilityZone ] | .[0]' | jq -r '.' || echo failed)
+              echo "available_az: $available_az"
+              [[ $available_az == 'failed' ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
 
               # Add new HSM
-              aws cloudhsmv2 create-hsm --cluster-id $cluster_id --availability-zone $available_az --region $region
+              aws cloudhsmv2 create-hsm --cluster-id $cluster_id --availability-zone $available_az --region $region || (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
 
               # Wait for new HSM to be listed
-              export number_hsm=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[0].Hsms[].State' --region $region | jq length)
+              export number_hsm=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[0].Hsms[].State' --region $region | jq length || echo failed)
+              [[ $number_hsm == 'failed' ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
               while [[ $number_hsm -lt 2 ]];do
                 number_hsm=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[0].Hsms[].State' --region $region | jq length)
                 echo Waiting for HSM. Length is $number_hsm
@@ -724,11 +822,20 @@ Resources:
 
               # Create a custom key store and store custom_key_store_id
               echo "custom key store id part of user script: `date`"
-              export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password "ch@ng3m3quick" --trust-anchor-certificate file://customerCA.crt --region $region | jq -r '.CustomKeyStoreId')
+              export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password "ch@ng3m3quick" --trust-anchor-certificate file://customerCA.crt --region $region | jq -r '.CustomKeyStoreId' || echo failed)
               echo "custom_key_store_id: $custom_key_store_id"
+              [[ $custom_key_store_id == 'failed' ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
               
               # Connect KMS to CloudHSM
-              aws kms connect-custom-key-store --custom-key-store-id $custom_key_store_id --region $region
+              n=0
+              while true
+              do
+                aws kms connect-custom-key-store --custom-key-store-id $custom_key_store_id --region $region && echo "Succeeded in aws kms connect-custom-key-store" && break
+                [[ $n -ge 5 ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
+                n=$((n+1))
+                echo "Retrying in $((n*5)) for aws kms connect-custom-key-store"
+                sleep $((n*5))
+              done
 
               # Wait for KMS to connect to CloudHSM
               while [[ -z $(aws kms describe-custom-key-stores --custom-key-store-id $custom_key_store_id --region $region | egrep '\bCONNECTED\b') ]];do
@@ -746,6 +853,7 @@ Resources:
       MaxSessionDuration: 7200
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
