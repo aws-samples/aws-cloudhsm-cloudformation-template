@@ -192,7 +192,8 @@ Resources:
         		  "ResultPath": "$.hsms",
               "Catch": [{
                 "ErrorEquals": [ "States.ALL" ],
-                "Next": "CFNError"
+                "Next": "CFNError",
+                "ResultPath": "$.error"
               }]
             },
             "wait_for_HSMs": {
@@ -207,7 +208,8 @@ Resources:
               "ResultPath": "$.HSMstatus",
               "Catch": [{
                 "ErrorEquals": [ "States.ALL" ],
-                "Next": "CFNError"
+                "Next": "CFNError",
+                "ResultPath": "$.error"
               }]
             },
             "HSMReady?": {
@@ -226,7 +228,8 @@ Resources:
               "ResultPath": "$.cluster",
               "Catch": [{
                 "ErrorEquals": [ "States.ALL" ],
-                "Next": "CFNError"
+                "Next": "CFNError",
+                "ResultPath": "$.error"
               }]
             },
             "wait_for_cluster": {
@@ -241,7 +244,8 @@ Resources:
               "ResultPath": "$.Clusterstatus",
               "Catch": [{
                 "ErrorEquals": [ "States.ALL" ],
-                "Next": "CFNError"
+                "Next": "CFNError",
+                "ResultPath": "$.error"
               }]
             },
             "ClusterReady?": {
@@ -646,6 +650,16 @@ Resources:
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
+  InitialHSMPassword:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub '/cloudhsm/initial-password-${CloudHSMCluster.cluster_id}'
+      Description: Stores the initial password for the CloudHSM
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin"}'
+        GenerateStringKey: "password"
+        PasswordLength: 10
+        ExcludePunctuation: true
   ClientInstanceSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -653,7 +667,7 @@ Resources:
       VpcId: !Ref VPCInput
   ClientInstance:
     Type: 'AWS::EC2::Instance'
-    DependsOn: CloudHSMCluster
+    DependsOn: [ "CloudHSMCluster", "InitialHSMPassword" ]
     CreationPolicy:
       ResourceSignal:
         Count: 1
@@ -677,19 +691,23 @@ Resources:
             - |
               #!/bin/bash
 
+              echo "Working directory is: /root"
+              cd /root
+
               echo "Start client instance user script: `date`"
               sudo yum update -y
               sleep 10
               sudo yum install jq expect wget curl openssl amazon-cloudwatch-agent -y
 
               echo -e '#!/usr/bin/expect -f
+              set password [lindex $argv 0]
               spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
               expect -exact "aws-cloudhsm>"
               send -- "listUsers\\r"
               expect -exact "aws-cloudhsm>"
               send -- "loginHSM PRECO admin password\\r"
               expect -exact "aws-cloudhsm>"
-              send -- "changePswd PRECO admin ch@ng3m3quick\\r"
+              send -- "changePswd PRECO admin $password\\r"
               expect -- "Do you want to continue(y/n)?"
               send -- "y\\r"
               expect -exact "aws-cloudhsm>"
@@ -700,13 +718,14 @@ Resources:
               chmod +x cHSM.expect
 
               echo -e '#!/usr/bin/expect -f
+              set password [lindex $argv 0]
               spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
               expect -exact "aws-cloudhsm>"
               send -- "listUsers\\r"
               expect -exact "aws-cloudhsm>"
-              send -- "loginHSM CO admin ch@ng3m3quick\\r"
+              send -- "loginHSM CO admin $password\\r"
               expect -exact "aws-cloudhsm>"
-              send -- "createUser CU kmsuser ch@ng3m3quick\\r"
+              send -- "createUser CU kmsuser $password\\r"
               expect -- "Do you want to continue(y/n)?"
               send -- "y\\r"
               expect -exact "aws-cloudhsm>"
@@ -783,11 +802,18 @@ Resources:
               sudo /opt/cloudhsm/bin/configure -a `cat hsm_ip.txt`
               sudo systemctl start cloudhsm-client.service
               
+              # get initial password
+              export initial_password=$(aws secretsmanager get-secret-value --secret-id ${SMPasswordRef} --region us-east-2 | jq '.SecretString | fromjson.password' || echo failed)
+              [[ $initial_password == 'failed' ]] && echo "Failed to retrieve password from secrets manager" && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance && exit 127
+
               # Give cloudhsm-client service time to startup
               sleep 5
               
-              { time ./cHSM.expect ; } 2> /home/ec2-user/cHSM-time.txt
-              { time ./CreateKMSUser.expect ; } 2> /home/ec2-user/CreateKMSUser-time.txt
+              # Redirect expect output to /dev/null to hide password and keep it from showing up in AWS Cloudwatch
+              echo "Running expect script cHSM.expect and CreateKMSUser.expect. redirecting output to hide password."
+
+              { time ./cHSM.expect $initial_password; } 2> /home/ec2-user/cHSM-time.txt 1> /dev/null
+              { time ./CreateKMSUser.expect $initial_password; } 2> /home/ec2-user/CreateKMSUser-time.txt 1> /dev/null
 
               # Wait for Cluster to become Active
               export c_init=""
@@ -822,7 +848,7 @@ Resources:
 
               # Create a custom key store and store custom_key_store_id
               echo "custom key store id part of user script: `date`"
-              export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password "ch@ng3m3quick" --trust-anchor-certificate file://customerCA.crt --region $region | jq -r '.CustomKeyStoreId' || echo failed)
+              export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password $initial_password --trust-anchor-certificate file://customerCA.crt --region $region | jq -r '.CustomKeyStoreId' || echo failed)
               echo "custom_key_store_id: $custom_key_store_id"
               [[ $custom_key_store_id == 'failed' ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
               
@@ -845,7 +871,8 @@ Resources:
 
               /opt/aws/bin/cfn-signal -s true --stack ${AWS::StackName} --region $region --resource ClientInstance
 
-            - { Cluster_Id: !GetAtt CloudHSMCluster.cluster_id }
+            - Cluster_Id: !GetAtt CloudHSMCluster.cluster_id
+              SMPasswordRef: !Ref InitialHSMPassword
   ClientInstanceRole:
     Type: 'AWS::IAM::Role'
     DependsOn: CloudHSMCluster
@@ -884,8 +911,6 @@ Resources:
               - 'ec2:Describe*'
               - 'ec2:AuthorizeSecurityGroup*'
               - 'ec2:RevokeSecurityGroupEgress'
-              - 'cloudhsm:Describe*'
-              - 'cloudhsm:InitializeCluster'
               - 'ec2:Describe*'
               - 'ec2:AuthorizeSecurityGroup*'
               - 'ec2:RevokeSecurityGroup*'
@@ -895,10 +920,32 @@ Resources:
               - 'ec2:CreateTags'
               - 'ec2:DeleteNetworkInterface'
               - 'ec2:DetachNetworkInterface'
-              - 'cloudhsm:*'
-              - 'kms:*'
-              - 'iam:CreateServiceLinkedRole'
             Resource: '*'
+          - Effect: Allow
+            Action:
+              - cloudhsm:CreateCluster
+              - cloudhsm:CreateHsm
+              - cloudhsm:Describe*
+              - cloudhsm:InitializeCluster
+              - cloudhsm:TagResource
+              - cloudhsm:ListTags
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - kms:CreateCustomKeyStore
+              - kms:ConnectCustomKeyStore
+              - kms:DescribeCustomKeyStores
+              - kms:UpdateCustomKeyStore
+              - kms:DisconnectCustomKeyStore
+              - kms:Decrypt
+              - iam:CreateServiceLinkedRole
+              - secretsmanager:ListSecrets
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - "secretsmanager:DescribeSecret"
+              - "secretsmanager:GetSecretValue"
+            Resource: !Ref InitialHSMPassword
       Roles:
         - !Ref ClientInstanceRole
 Outputs:
