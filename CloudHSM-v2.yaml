@@ -803,8 +803,9 @@ Resources:
               sudo systemctl start cloudhsm-client.service
               
               # get initial password
-              export initial_password=$(aws secretsmanager get-secret-value --secret-id ${SMPasswordRef} --region us-east-2 | jq '.SecretString | fromjson.password' || echo failed)
-              [[ $initial_password == 'failed' ]] && echo "Failed to retrieve password from secrets manager" && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance && exit 127
+              export check_password=$(aws secretsmanager get-secret-value --secret-id ${SMPasswordRef} --region $region 2>&1)
+              [[ $(echo $check_password | awk '{print match($0,"error")}') -gt 0 ]] && echo "Failed to retrieve password from secrets manager" && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance && exit 127
+              export initial_password=$(echo $check_password | jq -r '.SecretString | fromjson.password')
 
               # Give cloudhsm-client service time to startup
               sleep 5
