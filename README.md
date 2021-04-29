@@ -1,28 +1,38 @@
 # Automated Deployment of AWS CloudHSM Resources
 
-This AWS CloudFormation template automatically deploys a set of [AWS CloudHSM|https://docs.aws.amazon.com/cloudhsm/latest/userguide/introduction.html] resources and supporting AWS resources to be able to use AWS CloudHSM in support of [AWS KMS custom key stores|https://docs.aws.amazon.com/kms/latest/developerguide/custom-key-store-overview.html].
+This AWS CloudFormation template automatically deploys a set of [AWS CloudHSM](https://docs.aws.amazon.com/cloudhsm/latest/userguide/introduction.html) resources and supporting AWS resources to be able to use AWS CloudHSM in support of [AWS KMS custom key stores](https://docs.aws.amazon.com/kms/latest/developerguide/custom-key-store-overview.html).
 
 ## Overview
 
 Creation of a CloudFormation stack using this template automatically creates:
+* AWS Lambda Functions and AWS Step Functions state machines to orchestrate creation and deletion of the CloudHSM cluster and HSM resources
 * A CloudHSM cluster
-* 2 HSMs to the cluster
+* CloudHSM HSMs in the cluster
 * An EC2 client configured to manage the cluster and HSMs
-* An initial crypto officer password for the cluster is stored in AWS Secrets Manager
+* An initial crypto officer password and stores it in AWS Secrets Manager
 * A CloudHSM trust anchor certificate
-* A set of AWS Lambda Functions and AWS Step Functions state machines used to orchestrate management of CloudHSM resources
+
+In addition to the creation and initialization of a CloudHSM cluster and HSMs, the stack creates:
 * A KMS custom key store backed by the cluster
-* A `kmsuser` crypto user password
+* An initial `kmsuser` crypto user password
 
-Deletion of the the stack results in the removal of these resources.
+Deletion of the the CloudFormation stack results in the removal of these resources.
 
-To do: Include a diagram showing the resources that are created by the template.
+<img src="images/cloudhsm-cluster.png" alt="CloudHSM Cluster" width="600"/>
 
 ### AWS Lambda functions and AWS Step Functions state machines
 
 Since management of CloudHSM resources is not yet available through resources built into CloudFormation, a series of AWS Lambda functions are deployed as part of the CloudFormation template to carry out the work of managing CloudHSM resources.
 
 Since the processes required to create and delete clusters and HSMs may take longer than the maximum Lambda function execution time of 15 minutes, a set of AWS Step Functions state machines are created by the CloudFormation template to orchestrate management of CloudHSM resources. 
+
+#### CloudHSM cluster create state machine
+
+<img src="images/state-machine-create-cluster.png" alt="Step Functions create state machine" width="200"/>
+
+#### CloudHSM cluster delete state machine
+
+<img src="images/state-machine-delete-cluster.png" alt="Step Functions delete state machine" width="200"/>
 
 ## Assumptions
 
