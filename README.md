@@ -62,27 +62,33 @@ Since the processes required to create and delete clusters and HSMs may take lon
 
 ...
 
+## Deploying the EC2 Client Later On
+
+We should document the process to replace the EC2 client
+  * Use cases
+    * Inadvertent deletion
+    * Keep it up-to-date in terms of libraries, ...
+
 ## Back up and restore
 
-...
+...is there anything with the automation to enable backup/restore...
 
-## Questions
+...pointer to existing documentation...
 
-* What happens when someone deletes the EC2 client? What needs to be done to replace it?
-* Is the automation making both HSMs active? One?
+## Operations
 
-## Enhancements
+* Is the automation making both HSMs active? 
+  * Yes, both HSMs are active
+  * Reason why: custom key store pre-requisites
 
-### Possibly near term
+## Enhancements to do for NuData
 
-* Publish the trust anchor certificate to customer-specific S3 bucket
-* Parameterize the HSM instance type
-* Paramterize the subnets/AZs in which to deploy the HSMs
-* Make the number of HSMs to deploy a parameter. Useful development and testing use cases.
-* Via parameters, enable customers to drive the naming of the created AWS resources.
-* Make the creation of KMS custom key store an option so that the template supports uses cases in which KMS is not required.
-* Parameterize the CloudFormation wait timeout (currently set to 2 hours)
-* Parameterize the extent of activating HSMs. e.g. one vs all.
+* Store the trust anchor certificate securely outside the client instance. Durable and available. (e.g. Secrets Manager)
 
-### Future
+### Potential future enhancements
+
 * Support changing the number of HSMs after the initial deployment by updating a parameter for the number of HSMs and updating the stack.
+* Parameterize the subnets/AZs in which to deploy the HSMs
+* Make the number of HSMs to deploy a parameter. Useful development and testing use cases.
+* Parameterize the HSM instance type
+* Make the creation of KMS custom key store an option so that the template supports uses cases in which KMS is not required.
