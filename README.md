@@ -75,6 +75,11 @@ We should document the process to replace the EC2 client
 
 ...pointer to existing documentation...
 
+* backup automatically every 24 hours
+* mutate ops trigger backup
+* create second HSM, backup of the cluster with one hsm, then restore happens to create second hsm (behind the scene)
+
+
 ## Operations
 
 * Is the automation making both HSMs active? 
@@ -92,3 +97,12 @@ We should document the process to replace the EC2 client
 * Make the number of HSMs to deploy a parameter. Useful development and testing use cases.
 * Parameterize the HSM instance type
 * Make the creation of KMS custom key store an option so that the template supports uses cases in which KMS is not required.
+
+## To Do
+
+* Ensure command failure causes cfn-init to fail
+  * https://github.com/widdix/aws-cf-templates/blob/master/ec2/al2-mutable-public.yaml#L1007
+* Move temp files to /tmp/ rather than /
+* move from hsm_ip.txt to using environment variable
+* does security group need to be done in the userdata? It doesn't get deleted
+* resource naming?

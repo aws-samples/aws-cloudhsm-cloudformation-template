@@ -388,7 +388,7 @@ Resources:
                   print('send(..) failed executing requests.put(..): ' + str(e))
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -396,9 +396,7 @@ Resources:
     Type: 'AWS::Lambda::Function'
     Properties:
       Code:
-        ZipFile:
-          Fn::Sub:
-            - |
+        ZipFile: |
               import json
               import boto3
               HSM = boto3.client('cloudhsmv2')
@@ -457,10 +455,9 @@ Resources:
                   cluster_id = Cluster['Cluster']['ClusterId']
 
                   return cluster_id
-            - {}
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -490,7 +487,7 @@ Resources:
                         return cluster['Clusters'][0]['State']
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -528,7 +525,7 @@ Resources:
                       print('Failed in 2 AZs - exiting with no HSM deployed')
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -564,7 +561,7 @@ Resources:
                       return states
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -584,7 +581,7 @@ Resources:
               return {'Deleting': cluster_id}
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -610,7 +607,7 @@ Resources:
               return {'Deleting': hsms}
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -627,7 +624,7 @@ Resources:
               cfnresponse.send(event, context, cfnresponse.FAILED, responseData, "CloudHSMCluster")
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -681,7 +678,7 @@ Resources:
                   print('send(..) failed executing requests.put(..): ' + str(e))
       Handler: index.lambda_handler
       Runtime: python3.7
-      Timeout: '20'
+      Timeout: 20
       Role: !GetAtt 
         - CloudHSMLambdaExecutionRole
         - Arn
@@ -702,7 +699,6 @@ Resources:
       VpcId: !Ref VPCInput
   ClientInstance:
     Type: 'AWS::EC2::Instance'
-    DependsOn: [ "CloudHSMCluster", "InitialHSMPassword" ]
     CreationPolicy:
       ResourceSignal:
         Count: 1
@@ -721,199 +717,352 @@ Resources:
             - CloudHSM-${Cluster_Id}
             - { Cluster_Id: !GetAtt CloudHSMCluster.cluster_id }
       UserData:
-        Fn::Base64:
-          Fn::Sub:
-            - |
-              #!/bin/bash
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
 
-              echo "Working directory is: /root"
-              cd /root
+          /opt/aws/bin/cfn-init \
+              --verbose \
+              --stack ${AWS::StackName} \
+              --resource ClientInstance \
+              --configsets default \
+              --region ${AWS::Region}
 
-              echo "Start client instance user script: `date`"
-              sudo yum update -y
-              sleep 10
-              sudo yum install jq expect wget curl openssl amazon-cloudwatch-agent -y
-              sudo curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              sudo unzip awscliv2.zip
-              sudo ./aws/install
-              sudo rm -f /bin/aws
-              sudo ln -s /usr/local/bin/aws /bin/aws
-
-              echo -e '#!/usr/bin/expect -f
-              set password [lindex $argv 0]
-              spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
-              expect -exact "aws-cloudhsm>"
-              send -- "listUsers\\r"
-              expect -exact "aws-cloudhsm>"
-              send -- "loginHSM PRECO admin password\\r"
-              expect -exact "aws-cloudhsm>"
-              send -- "changePswd PRECO admin $password\\r"
-              expect -- "Do you want to continue(y/n)?"
-              send -- "y\\r"
-              expect -exact "aws-cloudhsm>"
-              send -- "listUsers\\r"
-              expect -exact "aws-cloudhsm>"
-              send -- "quit\\r"
-              expect eof' > cHSM.expect
-              chmod +x cHSM.expect
-
-              echo -e '#!/usr/bin/expect -f
-              set password [lindex $argv 0]
-              spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
-              expect -exact "aws-cloudhsm>"
-              send -- "listUsers\\r"
-              expect -exact "aws-cloudhsm>"
-              send -- "loginHSM CO admin $password\\r"
-              expect -exact "aws-cloudhsm>"
-              send -- "createUser CU kmsuser $password\\r"
-              expect -- "Do you want to continue(y/n)?"
-              send -- "y\\r"
-              expect -exact "aws-cloudhsm>"
-              send -- "listUsers\\r"
-              expect "aws-cloudhsm>"
-              send -- "quit\\r"
-              expect eof' > CreateKMSUser.expect
-              chmod +x CreateKMSUser.expect
-
-              echo -e '{
-                "agent": {
-                  "run_as_user": "root"
-                },
-                "logs": {
-                  "logs_collected": {
-                    "files": {
-                      "collect_list": [
-                        {
-                          "file_path": "/var/log/messages",
-                          "log_group_name": "/aws/ec2/CloudHSM-${Cluster_Id}",
-                          "log_stream_name": "messages"
-                        },
-                        {
-                          "file_path": "var/log/cloud-init-output.log",
-                          "log_group_name": "/aws/ec2/CloudHSM-${Cluster_Id}",
-                          "log_stream_name": "cloud-init-output.log"
-                        }
-                      ]
-                    }
+          /opt/aws/bin/cfn-signal \
+              --exit-code $? \
+              --stack ${AWS::StackName} \
+              --resource ClientInstance \
+              --region ${AWS::Region}
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+            - 01-config-cloudwatch-agent
+            - 02-install-dependencies
+            - 03-generate-cluster-cert
+            - 04-initialize-cluster
+            - 05-config-security-group
+            - 06-start-client-service
+            - 07-activate-cluster
+            - 08-add-hsm
+            - 09-create-kms-custom-key-store
+        01-config-cloudwatch-agent:
+          packages:
+            yum:
+              amazon-cloudwatch-agent: []
+          files:
+            /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json:
+              content: !Sub |
+                {
+                  "logs": {
+                    "logs_collected": {
+                      "files": {
+                        "collect_list": [
+                          {
+                            "file_path": "/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/amazon-cloudwatch-agent.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/messages",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/messages",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cloud-init.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cloud-init.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cloud-init-output.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cloud-init-output.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cfn-init.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cfn-init.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cfn-wire.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cfn-wire.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/quagga/bgpd.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/bgpd.log",
+                            "timezone": "UTC"
+                          }
+                        ]
+                      }
+                    },
+                    "log_stream_name": "${rCloudWatchLogsAgentGroup}",
+                    "force_flush_interval" : 15
                   }
                 }
-              }' > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-              chmod 644 /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-              /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a stop
-              /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+              mode: '000444'
+              owner: root
+              group: root
+          commands:
+            01-stop-service:
+              command: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a stop
+            02-start-service:
+              command: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+        02-install-dependencies:
+          packages:
+            yum:
+              curl: []
+              expect: []
+              jq: []
+              openssl: []
+              wget: []
+          commands:
+            01-yum-update:
+              command: /usr/bin/yum update -y
+            02-install-awscli-v2:
+              command: >-     
+                /usr/bin/curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" &&
+                /usr/bin/unzip awscliv2.zip &&
+                ./aws/install &&
+                /usr/bin/rm -f /bin/aws &&
+                /usr/bin/ln -s /usr/local/bin/aws /bin/aws
+            03-install-cloudhsm-client:
+              command: >-
+                /usr/bin/wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-client-latest.el7.x86_64.rpm &&
+                /usr/bin/yum install -y ./cloudhsm-client-latest.el7.x86_64.rpm
+        03-generate-cluster-cert:
+          files:
+            /tmp/generate-cluster-cert.sh:
+              content: !Sub |
+                #!/bin/bash
 
-              wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-client-latest.el7.x86_64.rpm
-              sudo yum install -y ./cloudhsm-client-latest.el7.x86_64.rpm
-              export instance_id=$(curl 169.254.169.254/latest/meta-data/instance-id/)
-              echo $instance_id
-              export region=$(curl http://169.254.169.254/latest/dynamic/instance-identity/document|grep region|awk -F\" '{print $4}')
-              export cluster_id=${Cluster_Id}
-              sleep 10
-              echo Creating Key
-              sudo openssl genrsa -out customerCA.key 4096
-              echo Creating CA
-              sudo openssl req -new -x509 -days 3652 -key customerCA.key -out customerCA.crt -subj "/C=IE/ST=$region/O=CloudHSM/OU=Amazon/CN=$cluster_id"
-              aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --region $region --output text --query 'Clusters[].Certificates.ClusterCsr' > ${!cluster_id}_ClusterCsr.csr
-              sudo openssl x509 -req -days 3652 -in ${!cluster_id}_ClusterCsr.csr -CA customerCA.crt -CAkey customerCA.key -CAcreateserial -out ${!cluster_id}_CustomerHsmCertificate.crt
-              sudo cp customerCA.crt /opt/cloudhsm/etc/customerCA.crt
-              aws cloudhsmv2 initialize-cluster --cluster-id $cluster_id --signed-cert file://${!cluster_id}_CustomerHsmCertificate.crt --trust-anchor file://customerCA.crt --region $region
+                /usr/bin/echo Creating Key
+                /usr/bin/openssl genrsa -out customerCA.key 4096
 
-              export c_init=""
-              while [ "$c_init" != "INITIALIZED" ]; do
-                echo Waiting for Cluster to be initialized...
-                c_init=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[].State' --region $region --output text)
-                sleep 5
-              done
+                /usr/bin/echo Creating CA
+                /usr/bin/openssl req -new -x509 -days 3652 -key customerCA.key -out customerCA.crt -subj "/C=IE/ST=${AWS::Region}/O=CloudHSM/OU=Amazon/CN=${CloudHSMCluster.cluster_id}"
+                
+                /usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --region ${AWS::Region} --output text --query 'Clusters[].Certificates.ClusterCsr' > ${CloudHSMCluster.cluster_id}_ClusterCsr.csr  
+                /usr/bin/openssl x509 -req -days 3652 -in ${CloudHSMCluster.cluster_id}_ClusterCsr.csr -CA customerCA.crt -CAkey customerCA.key -CAcreateserial -out ${CloudHSMCluster.cluster_id}_CustomerHsmCertificate.crt
+                
+                /usr/bin/cp customerCA.crt /opt/cloudhsm/etc/customerCA.crt
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            01-generate-cluster-cert:
+              command: /tmp/generate-cluster-cert.sh
+        04-initialize-cluster:
+          files:
+            /tmp/initialize-cluster.sh:
+              content: !Sub |
+                #!/bin/bash
 
-              echo Cluster Initialized!
-              aws cloudhsmv2  describe-clusters --filters clusterIds=$cluster_id --query "Clusters[0].Hsms[0].EniIp" --output text --region $region > hsm_ip.txt || (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
+                /usr/local/bin/aws cloudhsmv2 initialize-cluster --cluster-id ${CloudHSMCluster.cluster_id} --signed-cert file://${CloudHSMCluster.cluster_id}_CustomerHsmCertificate.crt --trust-anchor file://customerCA.crt --region ${AWS::Region}
 
-              # Setup inbound rule to allow EC2 instance security group to access HSM
-              export instance_group=$(aws ec2 describe-instances --instance-ids $instance_id --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $region || echo failed)
-              echo "instance_group: $instance_group"
-              [[ $instance_group == 'failed' ]] && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance
+                C_INIT=""
+                while [ "$C_INIT" != "INITIALIZED" ]; do
+                  /usr/bin/echo Waiting for Cluster to be initialized...
+                  C_INIT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --query 'Clusters[].State' --region ${AWS::Region} --output text)
+                  /usr/bin/sleep 5
+                done
 
-              export security_group=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query Clusters[*].SecurityGroup[] --output text --region $region || echo failed)
-              echo "security_group: $security_group"
-              [[ $security_group == 'failed' ]] && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance
+                /usr/bin/echo Cluster Initialized!
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            01-initialize-cluster:
+              command: /tmp/initialize-cluster.sh
+        05-config-security-group:
+          files:
+            /tmp/config-security-group.sh:
+              content: !Sub |
+                #!/bin/bash
 
-              aws ec2 authorize-security-group-ingress --group-id $security_group --source-group $instance_group --protocol all --region $region || (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;echo "Failed to configure HSM security group";exit 127)
+                INSTANCE_ID=$(curl 169.254.169.254/latest/meta-data/instance-id/)
+                /usr/bin/echo $INSTANCE_ID
+                
+                INSTANCE_GROUP=$(/usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region ${AWS::Region} || echo failed)
+                /usr/bin/echo "INSTANCE_GROUP: $INSTANCE_GROUP"
+                [[ $INSTANCE_GROUP == 'failed' ]] && exit 127
+                
+                SECURITY_GROUP=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --query Clusters[*].SecurityGroup[] --output text --region ${AWS::Region} || echo failed)
+                /usr/bin/echo "SECURITY_GROUP: $SECURITY_GROUP"
+                [[ $security_group == 'failed' ]] && exit 127
+
+                /usr/local/bin/aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP --source-group $INSTANCE_GROUP --protocol all --region ${AWS::Region}
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            01-config-security-group:
+              command: /tmp/config-security-group.sh
+        06-start-client-service:
+          files:
+            /tmp/update-hsm-data.sh:
+              content: !Sub |
+                #!/bin/bash
+
+                /opt/cloudhsm/bin/configure -a $(/usr/local/bin/aws cloudhsmv2  describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --query "Clusters[0].Hsms[0].EniIp" --output text --region ${AWS::Region})
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            00-stop-client-service:
+              command: systemctl stop  cloudhsm-client.service
+            01-update-hsm-data:
+              command: /tmp/update-hsm-data.sh
+            02-enable-and-start-client-service:
+              command: >- 
+                systemctl enable cloudhsm-client.service && 
+                systemctl start  cloudhsm-client.service &&
+                /usr/bin/sleep 5
+        07-activate-cluster:
+          files:
+            /tmp/cHSM.expect:
+              content: |
+                #!/usr/bin/expect -f
+                set password [lindex $argv 0]
+                spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "loginHSM PRECO admin password\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "changePswd PRECO admin $password\r"
+                expect -- "Do you want to continue(y/n)?"
+                send -- "y\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "quit\r"
+                expect eof
+              mode: '000700'
+              owner: root
+              group: root
+            /tmp/CreateKMSUser.expect:
+              content: |
+                #!/usr/bin/expect -f
+                set password [lindex $argv 0]
+                spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "loginHSM CO admin $password\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "createUser CU kmsuser $password\r"
+                expect -- "Do you want to continue(y/n)?"
+                send -- "y\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect "aws-cloudhsm>"
+                send -- "quit\r"
+                expect eof
+              mode: '000700'
+              owner: root
+              group: root
+            /tmp/activate-cluster.sh:
+              content: !Sub |
+                #!/bin/bash
+
+                CHECK_PASSWORD=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id ${InitialHSMPassword} --region ${AWS::Region} 2>&1)
+                [[ $(echo $CHECK_PASSWORD | awk '{print match($0,"error")}') -gt 0 ]] && echo "Failed to retrieve password from secrets manager" && exit 127
+                INITIAL_PASSWORD=$(echo $CHECK_PASSWORD | jq -r '.SecretString | fromjson.password')
+
+                { time /tmp/cHSM.expect $INITIAL_PASSWORD; } 2> /home/ec2-user/cHSM-time.txt 1> /dev/null
+                { time /tmp/CreateKMSUser.expect $INITIAL_PASSWORD; } 2> /home/ec2-user/CreateKMSUser-time.txt 1> /dev/null
+
+                C_INIT=""
+                while [ "$C_INIT" != "ACTIVE" ]; do
+                  echo Waiting for Cluster to be ACTIVE...
+                  C_INIT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --query 'Clusters[].State' --region ${AWS::Region} --output text)
+                  sleep 5
+                done
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            01-activate-cluster:
+              command: /tmp/activate-cluster.sh 
+        08-add-hsm:
+          files:
+            /tmp/add-hsm.sh:
+              content: !Sub |
+                #!/bin/bash
+
+                # Next steps are creating a another HSM for KMS
+                AVAILABLE_AZ=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --region ${AWS::Region} --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[0].AvailabilityZone ] | .[0]' | jq -r '.' || echo failed)
+                echo "AVAILABLE_AZ: $AVAILABLE_AZ"
+                [[ $AVAILABLE_AZ == 'failed' ]] && exit 127
+
+                # Add new HSM
+                /usr/local/bin/aws cloudhsmv2 create-hsm --cluster-id ${CloudHSMCluster.cluster_id} --availability-zone $AVAILABLE_AZ --region ${AWS::Region} || exit 127
+
+                # Wait for new HSM to be listed
+                NUMBER_HSM=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --query 'Clusters[0].Hsms[].State' --region ${AWS::Region} | jq length || echo failed)
+                [[ $NUMBER_HSM == 'failed' ]] && exit 127
+                while [[ $NUMBER_HSM -lt 2 ]];do
+                  NUMBER_HSM=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --query 'Clusters[0].Hsms[].State' --region ${AWS::Region} | jq length)
+                  echo Waiting for HSM. Length is $NUMBER_HSM
+                  sleep 5
+                done
+
+                # Wait for new HSM to be Active
+                while [[ ! -z $(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=${CloudHSMCluster.cluster_id} --query 'Clusters[0].Hsms[].State' --region ${AWS::Region} --output text | egrep 'CREATE') ]];do
+                  echo "Waiting for HSM to become active..."
+                  sleep 5;
+                done
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            01-add-hsm:
+              command: /tmp/add-hsm.sh  
+        09-create-kms-custom-key-store:
+          files:
+            /tmp/create-kms-custom-key-store.sh:
+              content: !Sub |
+                #!/bin/bash
+
+                CHECK_PASSWORD=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id ${InitialHSMPassword} --region ${AWS::Region} 2>&1)
+                [[ $(echo $CHECK_PASSWORD | awk '{print match($0,"error")}') -gt 0 ]] && echo "Failed to retrieve password from secrets manager" && exit 127
+                INITIAL_PASSWORD=$(echo $CHECK_PASSWORD | jq -r '.SecretString | fromjson.password')
+
+                # Create a custom key store and store custom_key_store_id
+                echo "custom key store id part of user script: `date`"
+                CUSTOM_KEY_STORE_ID=$(/usr/local/bin/aws kms create-custom-key-store --custom-key-store-name ${CloudHSMCluster.cluster_id} --cloud-hsm-cluster-id ${CloudHSMCluster.cluster_id} --key-store-password $INITIAL_PASSWORD --trust-anchor-certificate file://customerCA.crt --region ${AWS::Region} | jq -r '.CustomKeyStoreId' || echo failed)
+                echo "CUSTOM_KEY_STORE_ID: $CUSTOM_KEY_STORE_ID"
+                [[ $CUSTOM_KEY_STORE_ID == 'failed' ]] && exit 127
               
-              sudo /opt/cloudhsm/bin/configure -a `cat hsm_ip.txt`
-              sudo systemctl start cloudhsm-client.service
-              
-              # get initial password
-              export check_password=$(aws secretsmanager get-secret-value --secret-id ${SMPasswordRef} --region $region 2>&1)
-              [[ $(echo $check_password | awk '{print match($0,"error")}') -gt 0 ]] && echo "Failed to retrieve password from secrets manager" && /opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance && exit 127
-              export initial_password=$(echo $check_password | jq -r '.SecretString | fromjson.password')
+                # Connect KMS to CloudHSM
+                n=0
+                while true
+                do
+                  /usr/local/bin/aws kms connect-custom-key-store --custom-key-store-id $CUSTOM_KEY_STORE_ID --region ${AWS::Region} && echo "Succeeded in aws kms connect-custom-key-store" && break
+                  [[ $n -ge 5 ]] && exit 127
+                  n=$((n+1))
+                  echo "Retrying in $((n*5)) for aws kms connect-custom-key-store"
+                  sleep $((n*5))
+                done
 
-              # Give cloudhsm-client service time to startup
-              sleep 5
-              
-              # Redirect expect output to /dev/null to hide password and keep it from showing up in AWS Cloudwatch
-              echo "Running expect script cHSM.expect and CreateKMSUser.expect. redirecting output to hide password."
-
-              { time ./cHSM.expect $initial_password; } 2> /home/ec2-user/cHSM-time.txt 1> /dev/null
-              { time ./CreateKMSUser.expect $initial_password; } 2> /home/ec2-user/CreateKMSUser-time.txt 1> /dev/null
-
-              # Wait for Cluster to become Active
-              export c_init=""
-              while [ "$c_init" != "ACTIVE" ]; do
-                echo Waiting for Cluster to be ACTIVE...
-                c_init=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[].State' --region $region --output text)
-                sleep 5
-              done
-
-              # Next steps are creating a another HSM for KMS
-              export available_az=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --region $region --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[0].AvailabilityZone ] | .[0]' | jq -r '.' || echo failed)
-              echo "available_az: $available_az"
-              [[ $available_az == 'failed' ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
-
-              # Add new HSM
-              aws cloudhsmv2 create-hsm --cluster-id $cluster_id --availability-zone $available_az --region $region || (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
-
-              # Wait for new HSM to be listed
-              export number_hsm=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[0].Hsms[].State' --region $region | jq length || echo failed)
-              [[ $number_hsm == 'failed' ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
-              while [[ $number_hsm -lt 2 ]];do
-                number_hsm=$(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[0].Hsms[].State' --region $region | jq length)
-                echo Waiting for HSM. Length is $number_hsm
-                sleep 5
-              done
-
-              # Wait for new HSM to be Active
-              while [[ ! -z $(aws cloudhsmv2 describe-clusters --filters clusterIds=$cluster_id --query 'Clusters[0].Hsms[].State' --region $region --output text | egrep 'CREATE') ]];do
-                echo "Waiting for HSM to become active..."
-                sleep 5;
-              done
-
-              # Create a custom key store and store custom_key_store_id
-              echo "custom key store id part of user script: `date`"
-              export custom_key_store_id=$(aws kms create-custom-key-store --custom-key-store-name ${Cluster_Id} --cloud-hsm-cluster-id $cluster_id --key-store-password $initial_password --trust-anchor-certificate file://customerCA.crt --region $region | jq -r '.CustomKeyStoreId' || echo failed)
-              echo "custom_key_store_id: $custom_key_store_id"
-              [[ $custom_key_store_id == 'failed' ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
-              
-              # Connect KMS to CloudHSM
-              n=0
-              while true
-              do
-                aws kms connect-custom-key-store --custom-key-store-id $custom_key_store_id --region $region && echo "Succeeded in aws kms connect-custom-key-store" && break
-                [[ $n -ge 5 ]] && (/opt/aws/bin/cfn-signal -s false --stack ${AWS::StackName} --region $region --resource ClientInstance;exit 127)
-                n=$((n+1))
-                echo "Retrying in $((n*5)) for aws kms connect-custom-key-store"
-                sleep $((n*5))
-              done
-
-              # Wait for KMS to connect to CloudHSM
-              while [[ -z $(aws kms describe-custom-key-stores --custom-key-store-id $custom_key_store_id --region $region | egrep '\bCONNECTED\b') ]];do
-                echo "Waiting for KMS to connect to CloudHSM..."
-                sleep 30
-              done
-
-              /opt/aws/bin/cfn-signal -s true --stack ${AWS::StackName} --region $region --resource ClientInstance
-
-            - Cluster_Id: !GetAtt CloudHSMCluster.cluster_id
-              SMPasswordRef: !Ref InitialHSMPassword
+                # Wait for KMS to connect to CloudHSM
+                while [[ -z $(/usr/local/bin/aws kms describe-custom-key-stores --custom-key-store-id $CUSTOM_KEY_STORE_ID --region ${AWS::Region} | egrep '\bCONNECTED\b') ]];do
+                  echo "Waiting for KMS to connect to CloudHSM..."
+                  sleep 30
+                done
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            01-create-kms-custom-key-store:
+              command: /tmp/create-kms-custom-key-store.sh
   ClientInstanceRole:
     Type: 'AWS::IAM::Role'
     DependsOn: CloudHSMCluster
@@ -989,6 +1138,13 @@ Resources:
             Resource: !Ref InitialHSMPassword
       Roles:
         - !Ref ClientInstanceRole
+
+  rCloudWatchLogsAgentGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '${AWS::StackName}'
+      RetentionInDays: 30
+
 Outputs:
   ClusterInfo:
     Description: The cluster_id value of the Cluster that has been set up
