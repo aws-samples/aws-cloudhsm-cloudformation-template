@@ -772,7 +772,9 @@ Resources:
           Value: !Sub '${pSystem}-client'
       UserData:
         Fn::Base64: !Sub |
-          #!/bin/bash -xe
+          #!/bin/bash -x
+
+          yum update -y aws-cfn-bootstrap
 
           /opt/aws/bin/cfn-init \
               --verbose \
@@ -780,6 +782,9 @@ Resources:
               --resource rClientInstance \
               --configsets ${pStackScope} \
               --region ${AWS::Region}
+
+          CFN_INIT_EXIT_CODE=$?
+          echo CFN_INIT_EXIT_CODE: $CFN_INIT_EXIT_CODE
 
           /opt/aws/bin/cfn-signal \
               --exit-code $? \

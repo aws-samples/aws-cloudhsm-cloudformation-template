@@ -203,15 +203,15 @@ When this issue occurs, attempt to delete the stack a second time. You can opt t
 
 If deletion fails again, use the AWS console to edit the security group for the CloudHSM cluster and remove references to the EC2 client instance security group. Then attempt to delete the stack again.
 
-### Failure of configuration during bootstrap of the EC2 client instance may not result in CloudFormation stack failing immediately
-
-When an error occurs during the automation that is built into the first boot of the EC2 client instance, the error might not cause the CloudFormation create operation to fail immediately. Instead, the CloudFormation stack may not fail until the overall timeout for the first boot automation expires.
-
-If you find that the creation of the stack is taking more than ~40 minutes, you should inspect the content of the `cfn-init.log` file in the EC2 client instance either via CloudWatch Logs or via a terminal session. See [Monitoring EC2 client instance configuration](#monitoring-ec2-client-instance-configuration) for details on accessing the `cfn-init.log` data.
-
 ## Troubleshooting Stack Creation
 
-The most common sources of issues occur within the automation of the EC2 client instance.  If you experience extended delays in the creation of the stack, you should inspect the progress of the EC2 client instance automation. See [Monitoring EC2 client instance configuration](#monitoring-ec2-client-instance-configuration) for details.
+The most common source of issue during stack creation is during the execution of automation from within the EC2 client instance.  By default, when issues occur during automation within the EC2 client instance, CloudFormation will attempt to rollback and delete the resources created up to the point of the failure.
+
+You can preserve the state of the failed stack creation attempt by creating the stack with the option to disable rollback on stack creation failure. In CloudFormation console when creating a new stack, see "Configure stack options" -> "Advanced options" -> "Stack creation options".  Select "Disabled" for "Rollback on failure".
+
+Once you attempt to create the stack again, the same failure may occur, but you should be able to inspect the content of the `cfn-init.log` log file. See [Monitoring EC2 client instance configuration](#monitoring-ec2-client-instance-configuration) for details on how to inspect this log data.
+
+After you've reviewed the cause of the error, you can proceed with deleting the stack, correcting the issue, and attempting to create the stack again.
 
 ## Performing Post Stack Creation Steps
 
