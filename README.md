@@ -27,7 +27,11 @@ Deletion of the the CloudFormation stack results in the removal of these resourc
 
 ## Usage
 
+This section recommends to the steps to prepare for and create a CloudHSM cluster.
+
 ### Prepare
+
+You should address the following considerations before using the CloudFormation template to create a CloudHSM cluster.
 
 #### 1. Review AWS CloudHSM and KMS Custom Key Store documentation
 
@@ -63,6 +67,8 @@ You'll need to determine the VPC and subnet in which an EC2 client instance that
 By default, the template creates a KMS custom key store and connects it to the CloudHSM cluster. If you don't plan on using KMS with your CloudHSM cluster, you can override the [`pStackScope`](#cloudformation-template-parameters) CloudFormation template parameter to specify that only the CloudHSM cluster be created.
 
 ### Create the stack
+
+Once you've addressed the preparation steps, you're ready to create the stack.
 
 #### 1. Create the stack
 
