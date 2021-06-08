@@ -19,7 +19,8 @@ In addition to a CloudHSM cluster and HSM resources, the following resources are
 
 * A CloudFormation custom resource AWS Lambda function that is used to create and delete CloudHSM clusters
 * AWS Step Functions state machines to orchestrate creation and deletion of CloudHSM clusters
-* An EC2 client configured to manage the cluster and HSMs
+* Lambda functions to support the state machines
+* An EC2 client configured to manage the cluster of HSMs
 * An initial crypto officer `admin` user password that is stored as a secret in AWS Secrets Manager
 * A CloudHSM trust anchor certificate
 
@@ -27,11 +28,9 @@ Deletion of the the CloudFormation stack results in the removal of these resourc
 
 ## Usage
 
-This section recommends to the steps to prepare for and create a CloudHSM cluster.
+### Preparing to create a CloudHSM cluster
 
-### Prepare
-
-You should address the following considerations before using the CloudFormation template to create a CloudHSM cluster.
+You should address the following considerations before using the CloudFormation template.
 
 #### 1. Review AWS CloudHSM and KMS Custom Key Store documentation
 
@@ -66,7 +65,7 @@ You'll need to determine the VPC and subnet in which an EC2 client instance that
 
 By default, the template creates a KMS custom key store and connects it to the CloudHSM cluster. If you don't plan on using KMS with your CloudHSM cluster, you can override the [`pStackScope`](#cloudformation-template-parameters) CloudFormation template parameter to specify that only the CloudHSM cluster be created.
 
-### Create the stack
+### Creating the CloudFormation stack
 
 Once you've addressed the preparation steps, you're ready to create the stack.
 
@@ -116,9 +115,9 @@ Deletion of the stack generally reverses this process. When the CloudFormation c
 
 ##### Monitoring Step Functions state machines
 
-You can open the AWS Step Functions console and select the cluster creation state machine to monitor progress.
+During creation of the stack, you can open the AWS Step Functions console and select the cluster creation state machine to monitor progress of the creation of the cluster and the first HSM.
 
-Since the processes required to create and delete clusters and HSMs may take longer than the maximum Lambda function execution time of 15 minutes, a set of AWS Step Functions state machines are created by the CloudFormation template to orchestrate management of CloudHSM resources. 
+Since the processes required to create and delete clusters and HSMs may take longer than the maximum Lambda function execution time of 15 minutes, a pair of AWS Step Functions state machines are used to orchestrate these long running workflows.
 
 **CloudHSM cluster create state machine**
 
@@ -130,11 +129,17 @@ Since the processes required to create and delete clusters and HSMs may take lon
 
 ##### Monitoring EC2 client instance configuration
 
-You have several options for monitoring the progress of EC2 client instance configuration.
+After the CloudHSM cluster and initial HSM are created via the Step Function state machine, the other long duration task is the configuration of the EC2 client instance.
+
+Upon either successful execution of the first boot automation or an error, a notification will be sent to CloudFormation indicating the result of configuring the EC2 client instance. This notification will enable CloudFormation to complete configuration of the EC2 client instance resource.
+
+You have several options for monitoring the progress of EC2 client instance configuration:
 
 **CloudWatch Logs**
 
-Access the CloudWatch console and select the `cloudhsm` log group. Select the `cfn-init.log` log stream to monitor the progress of the first boot automation.  Review the content of the [`AWS::CloudFormation::Init`](cloudhsm.yaml) section in the CloudFormation template for the sequence of scripts that are executed.
+Access the CloudWatch console and select the `cloudhsm` log group. The name of the log group is based on the value of the `pSystem` CloudFormation template parameter.
+
+In the proper log group, select the `cfn-init.log` log stream to monitor the progress of the first boot automation.  Review the content of the [`AWS::CloudFormation::Init`](cloudhsm.yaml) section in the CloudFormation template for the sequence of scripts that are executed.
 
 **AWS Systems Manager Session Manager**
 
