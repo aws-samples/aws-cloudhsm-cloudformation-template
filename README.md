@@ -210,11 +210,13 @@ If deletion fails again, use the AWS console to edit the security group for the 
 
 ## Troubleshooting Stack Creation
 
-The most common source of issue during stack creation is during the execution of automation from within the EC2 client instance.  By default, when issues occur during automation within the EC2 client instance, CloudFormation will attempt to rollback and delete the resources created up to the point of the failure.
+If you notice that stack creation fails on creation of the `rClientInstance` EC2 client instance resource, you should inspect the content of the `cfn-init.log` log file produced by the EC2 client instance. 
 
-You can preserve the state of the failed stack creation attempt by creating the stack with the option to disable rollback on stack creation failure. In CloudFormation console when creating a new stack, see "Configure stack options" -> "Advanced options" -> "Stack creation options".  Select "Disabled" for "Rollback on failure".
+By default, when issues occur stack creation, CloudFormation will attempt to rollback the changes by deleting the resources created up to the point of the failure. Consequently, the EC2 client instance and its CloudWatch log group and log streams will be automatically deleted.
 
-Once you attempt to create the stack again, the same failure may occur, but you should be able to inspect the content of the `cfn-init.log` log file. See [Monitoring EC2 client instance configuration](#monitoring-ec2-client-instance-configuration) for details on how to inspect this log data.
+You can preserve the state of a failed stack creation attempt by creating the stack with the option to disable rollback on stack creation failure. In CloudFormation console when creating a new stack, see "Configure stack options" -> "Advanced options" -> "Stack creation options".  Select "Disabled" for "Rollback on failure".
+
+Once you attempt to create the stack again, the same failure may occur, but you should be able to inspect the content of the `cfn-init.log` log file. See [Monitoring EC2 client instance configuration](#monitoring-ec2-client-instance-configuration) for details on how to inspect this log data. 
 
 After you've reviewed the cause of the error, you can proceed with deleting the stack, correcting the issue, and attempting to create the stack again.
 
