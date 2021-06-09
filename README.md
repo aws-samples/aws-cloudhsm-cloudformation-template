@@ -4,7 +4,7 @@ This AWS CloudFormation template automatically deploys an [AWS CloudHSM](https:/
 
 * [Overview](#overview)
 * [Usage](#usage)
-* [Known Issues](#known-issues)
+* [Known Issues and Limitations](#known-issues-and-limitations)
 * [Troubleshooting Stack Creation](#troubleshooting-stack-creation)
 * [Performing Post Stack Creation Steps](#performing-post-stack-creation-steps)
 * [Monitoring and Managing the Resources](#monitoring-and-managing-the-resources)
