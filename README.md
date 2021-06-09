@@ -200,13 +200,25 @@ Once you're in the terminal session:
   * `listUsers` - Lists users defined on each HSM. The set of users should be identical across HSMs.
   * `info server 0` - List details of each HSM. Replace `0` with the index of the HSM of interest.
 
-## Known Issues
+## Known Issues and Limitations
 
 ### Deletion of stack may fail due to dependency violation with a security group
 
-When this issue occurs, attempt to delete the stack a second time. You can opt to leave the security group intact and manually delete it via the AWS console. 
+When stack deletion fails on the `rClientInstanceSecurityGroup`, you can attempt to delete the stack a second time, but opt to leave the security group intact. After the stack has been deleted, you can address the dependency and then manually delete the security group.
 
-If deletion fails again, use the AWS console to edit the security group for the CloudHSM cluster and remove references to the EC2 client instance security group. Then attempt to delete the stack again.
+1. Access "Security Groups" in the EC2 Console.
+2. Look for the security group associated with the CloudHSM cluster.
+3. Edit the inbound rules and delete the reference to the EC2 client instance security group.
+4. Delete both the EC2 client instance security group and the security group associated with the CloudHSM cluster.
+
+### Deletion of stack doesn't delete the KMS custom key store
+
+Since the KMS custom key store is created via the AWS CLI during first boot of the EC2 client instance, this resource is not managed via CloudFormation and not automatically deleted during deletion of the stack.
+
+You can manually delete the custom key store via the KMS console or AWS CLI.  
+
+1. Disconnect the key store from the CloudHSM cluster. The associated ENIs used to enable the custom key store to connect to the HSMs will be automatically deleted.
+2. After the key store is disconnected, you can delete the key store.
 
 ## Troubleshooting Stack Creation
 
