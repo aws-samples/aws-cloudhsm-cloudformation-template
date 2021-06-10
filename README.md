@@ -57,7 +57,7 @@ Determine an existing VPC with which you want the HSMs and KMS custom key store 
 
 You can optionally use the  [`vpc.yaml`](vpc.yaml) CloudFormation template to automatically create a VPC that is suitable for use with CloudHSM.
 
-Currently, the automation used by the CloudFormation template automatically identifies the compatible AZs in the AWS Region and will automatically associate each HSM with a distinct AZ and subnet.
+Currently, the [`cloudhsm.yaml`](cloudhsm.yaml) CloudFormation template automatically identifies the compatible AZs in the AWS Region and will automatically associate each HSM with a distinct AZ and subnet.
 
 #### 5. Determine the subnet in which to deploy the EC2 client instance
 
