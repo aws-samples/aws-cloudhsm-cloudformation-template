@@ -53,9 +53,11 @@ Typically, you will want to create at least two HSMs for each CloudHSM cluster. 
 
 #### 4. Ensure a suitable VPC and subnets are available
 
-Determine an existing VPC with which you want the HSMs and KMS custom key store associated.  You can optionally use the  [`vpc.yaml`](vpc.yaml) CloudFormation template to automatically create a VPC that is suitable for use with CloudHSM.
+Determine an existing VPC with which you want the HSMs and KMS custom key store associated.  If you're provisioning a KMS custom key store, then your existing VPC must have at least two (2) private subnets that are in different Availability Zones (AZs).
 
-Currently, the automation used by the CloudFormation template automatically identifies the compatible Availability Zones (AZs) in the AWS Region and will automatically associate each HSM with a distinct AZ and subnet.
+You can optionally use the  [`vpc.yaml`](vpc.yaml) CloudFormation template to automatically create a VPC that is suitable for use with CloudHSM.
+
+Currently, the automation used by the CloudFormation template automatically identifies the compatible AZs in the AWS Region and will automatically associate each HSM with a distinct AZ and subnet.
 
 #### 5. Determine the subnet in which to deploy the EC2 client instance
 
