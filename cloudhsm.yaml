@@ -20,6 +20,7 @@ Metadata:
         Parameters:
           - pClientInstanceSubnet
           - pClientInstanceType
+          - pClientInstanceAmiSsmParameter
           - pClientInstanceAmiId
       - Label:
          default: Resource Naming Qualifier
@@ -37,8 +38,10 @@ Metadata:
         default: ID of the subnet in which to launch the client instance
       pClientInstanceType:
         default: EC2 instance type for the client instance
+      pClientInstanceAmiSsmParameter:
+        default: SSM Parameter Name for EC2 Amazon Machine Image (AMI) for the client instance
       pClientInstanceAmiId:
-        default: EC2 Amazon Machine Image (AMI) for the client instance
+        default: ID for EC2 Amazon Machine Image (AMI) for the client instance
       pSystem:
         default: System identifier used to qualify cloud resource names
 
@@ -77,14 +80,22 @@ Parameters:
     Description: >-
       Enter t3a.small, t3a.medium. The EC2 instance is a critical component for automating the provisioning.
 
-  pClientInstanceAmiId:
+  pClientInstanceAmiSsmParameter:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: SSM paramater name for EC2 Amazon Machine Image (AMI) for the client instance
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs
+
+  pClientInstanceAmiId:
+    Type: String
+    Description: ID for EC2 Amazon Machine Image (AMI) for the client instance (Optional. When specified, overrides SSM parameter)
 
   pSystem:
     Type: String
     Description: Used to qualify resource names. Override if you expect to have multiple instances of the stack in the same AWS account.
     Default: cloudhsm
+
+Conditions:
+  cUseAmiId: !Not [!Equals [ !Ref 'pClientInstanceAmiId', '' ] ]
 
 Resources:
   rCloudHsmCluster:
@@ -761,7 +772,7 @@ Resources:
         Timeout: PT2H
     Properties:
       InstanceType: !Ref pClientInstanceType
-      ImageId: !Ref pClientInstanceAmiId
+      ImageId: !If [ cUseAmiId, !Ref pClientInstanceAmiId, !Ref pClientInstanceAmiSsmParameter ]
       IamInstanceProfile: !Ref rClientInstanceProfile
       SubnetId: !Ref pClientInstanceSubnet
       SecurityGroupIds: [
