@@ -84,7 +84,8 @@ Use the [`cloudhsm.yaml`](cloudhsm.yaml) CloudFormation template to create a new
 |`pNumHsms`|Optional|Number of HSMs to create in the CloudHSM cluster: `1`, `2`, or `3`|`2`|
 |`pClientInstanceSubnet`|Required|The subnet in which the EC2 client will be deployed.|None|
 |`pClientInstanceType`|Optional|Instance type to use for the EC2 client|`t3a.small`|
-|`pClientInstanceAmiId`|Optional|EC2 image ID to use for the EC2 client.|`/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs`|
+|`pClientInstanceAmiSsmParameter`|Optional|SSM parameter name for EC2 AMI to use for the EC2 client.|`/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs`|
+|`pClientInstanceAmiId`|Optional|ID of EC2 AMI to use for the EC2 client.<br><br>Overrides `pClientInstanceAmiSsmParameter` when present.|None|
 |`pSystem`|Optional|Used to qualify cloud resource names. Override if you expect to have multiple instances of the stack in the same AWS account.|`cloudhsm`|
 
 #### 2. Monitor progress of stack creation
