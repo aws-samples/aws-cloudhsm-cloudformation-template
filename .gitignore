@@ -1,3 +1,10 @@
-.vscode
-**/.DS_Store
-**/build
+__MACOSX
+amazon-sagemaker-immersion-day
+bank-additional
+messages
+MLA-NLP-LAB
+nltk_data
+default of credit card clients.xls
+ImmersionDay.flow
+ML model-Copy1.ipynb
+tutorial.ipynb
