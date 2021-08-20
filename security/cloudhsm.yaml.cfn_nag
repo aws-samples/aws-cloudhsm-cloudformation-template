@@ -1,0 +1,47 @@
+------------------------------------------------------------
+cloudhsm.yaml
+------------------------------------------------------------------------------------------------------------------------
+[33m| WARN W11[0m
+[33m|[0m
+[33m| Resources: ["rStateMachineExecutionRole", "rLambdaExecutionRole", "rClientInstanceRole"][0m
+[33m| Line Numbers: [110, 338, 1217][0m
+[33m|[0m
+[33m| IAM role should not allow * resource on its permissions policy[0m
+------------------------------------------------------------
+[33m| WARN W89[0m
+[33m|[0m
+[33m| Resources: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterStatus", "rLambdaCreateHsm", "rLambdaGetHsmStatus", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaCfnError", "rLambdaSendCfnResponse"][0m
+[33m| Line Numbers: [382, 465, 534, 564, 602, 638, 662, 688, 705][0m
+[33m|[0m
+[33m| Lambda functions should be deployed inside a VPC[0m
+------------------------------------------------------------
+[33m| WARN W92[0m
+[33m|[0m
+[33m| Resources: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterStatus", "rLambdaCreateHsm", "rLambdaGetHsmStatus", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaCfnError", "rLambdaSendCfnResponse"][0m
+[33m| Line Numbers: [382, 465, 534, 564, 602, 638, 662, 688, 705][0m
+[33m|[0m
+[33m| Lambda functions should define ReservedConcurrentExecutions to reserve simultaneous executions[0m
+------------------------------------------------------------
+[33m| WARN W84[0m
+[33m|[0m
+[33m| Resources: ["rCloudWatchLogsAgentGroup"][0m
+[33m| Line Numbers: [1288][0m
+[33m|[0m
+[33m| CloudWatchLogs LogGroup should specify a KMS Key Id to encrypt the log data[0m
+------------------------------------------------------------
+[33m| WARN W28[0m
+[33m|[0m
+[33m| Resources: ["rClientInstanceSecurityGroup", "rStateMachineExecutionRole", "rLambdaExecutionRole", "rClientInstanceRole"][0m
+[33m| Line Numbers: [770, 110, 338, 1217][0m
+[33m|[0m
+[33m| Resource found with an explicit name, this disallows updates that require replacement of this resource[0m
+------------------------------------------------------------
+[33m| WARN W77[0m
+[33m|[0m
+[33m| Resources: ["rInitialHsmCryptoOfficerSecret"][0m
+[33m| Line Numbers: [759][0m
+[33m|[0m
+[33m| Secrets Manager Secret should explicitly specify KmsKeyId. Besides control of the key this will allow the secret to be shared cross-account[0m
+
+Failures count: 0
+Warnings count: 27

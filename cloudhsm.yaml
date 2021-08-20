@@ -372,7 +372,12 @@ Resources:
                   - states:*
                 Resource:
                   - '*'
-
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F3
+            reason: Some of the allowed actions require wildcarded resources
+  
   rCustomResourceCloudHsmCluster:
     Type: AWS::Lambda::Function
     Properties:
@@ -638,11 +643,15 @@ Resources:
           import json
           import boto3
           HSM = boto3.client('cloudhsmv2')
+          EC2 = boto3.client('ec2')
           def lambda_handler(event, context):
               print(event)
               cluster_id = event['PhysicalResourceId']
               print('Deleting Cluster ' + str(cluster_id))
               HSM.delete_cluster(ClusterId=cluster_id)
+              sg = EC2.describe_security_groups(Filters=[{'Name': 'tag:hsm_cluster_id', 'Values': [cluster_id]}])['SecurityGroups']
+              if sg:
+                EC2.delete_security_group(GroupId=sg[0]['GroupId'])
               return {'Deleting': cluster_id}
       Handler: index.lambda_handler
       Runtime: python3.7
@@ -763,6 +772,15 @@ Resources:
       GroupName: !Sub '${pSystem}-client-${rCloudHsmCluster.cluster_id}'
       GroupDescription: Client Instance Security Group
       VpcId: !Ref pVpcId
+      Tags:
+        - Key: hsm_cluster_id
+          Value: !Sub '${rCloudHsmCluster.cluster_id}'
+    DeletionPolicy: Retain
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F1000
+            reason: Requires outbound access to multiple package repositories. Once provisioned the EC2 instances will be shutdown to reduce surface area of attack and cost
 
   rClientInstance:
     Type: AWS::EC2::Instance
@@ -798,7 +816,7 @@ Resources:
           echo CFN_INIT_EXIT_CODE: $CFN_INIT_EXIT_CODE
 
           /opt/aws/bin/cfn-signal \
-              --exit-code $? \
+              --exit-code $CFN_INIT_EXIT_CODE \
               --stack ${AWS::StackName} \
               --resource rClientInstance \
               --region ${AWS::Region}
@@ -967,7 +985,7 @@ Resources:
           commands:
             01-initialize-cluster:
               cwd: /root/cloudhsm-work
-              command: /root/cloudhsm-work/initialize-cluster.sh
+              command: /root/cloudhsm-work/initialize-cluster.sh > /root/cloudhsm-work/initialize-cluster.log 2>&1
         05-config-security-group:
           files:
             /root/cloudhsm-work/config-security-group.sh:
