@@ -82,6 +82,10 @@ Resources:
             Action:
             - ec2:Describe*
             Resource: "*"
+            Condition:
+              'ForAllValues:StringEquals':
+                'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                'aws:RequestedRegion': !Sub '${AWS::Region}'
       Roles:
         - !Ref lookupCloudHSMv2AZRole
   lookupCloudHSMv2AZCR:

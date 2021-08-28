@@ -4,44 +4,77 @@ cloudhsm.yaml
 [33m| WARN W11[0m
 [33m|[0m
 [33m| Resources: ["rStateMachineExecutionRole", "rLambdaExecutionRole", "rClientInstanceRole"][0m
-[33m| Line Numbers: [110, 338, 1217][0m
+[33m| Line Numbers: [110, 338, 1264][0m
 [33m|[0m
 [33m| IAM role should not allow * resource on its permissions policy[0m
+ Notes: The * resource parameter is limited to the region and account of the principal deploying the CF template. This has been reviewed and deemed an acceptable risk.
 ------------------------------------------------------------
 [33m| WARN W89[0m
 [33m|[0m
 [33m| Resources: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterStatus", "rLambdaCreateHsm", "rLambdaGetHsmStatus", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaCfnError", "rLambdaSendCfnResponse"][0m
-[33m| Line Numbers: [382, 465, 534, 564, 602, 638, 662, 688, 705][0m
+[33m| Line Numbers: [413, 496, 565, 595, 633, 669, 698, 724, 741][0m
 [33m|[0m
 [33m| Lambda functions should be deployed inside a VPC[0m
+ Notes: Lambda functions only run during provisioning and deletion of the stack. This has been reviewed and deemed an acceptable risk.
 ------------------------------------------------------------
 [33m| WARN W92[0m
 [33m|[0m
 [33m| Resources: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterStatus", "rLambdaCreateHsm", "rLambdaGetHsmStatus", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaCfnError", "rLambdaSendCfnResponse"][0m
-[33m| Line Numbers: [382, 465, 534, 564, 602, 638, 662, 688, 705][0m
+[33m| Line Numbers: [413, 496, 565, 595, 633, 669, 698, 724, 741][0m
 [33m|[0m
 [33m| Lambda functions should define ReservedConcurrentExecutions to reserve simultaneous executions[0m
+ Notes: Lambda functions do not need to run concurrently.
 ------------------------------------------------------------
 [33m| WARN W84[0m
 [33m|[0m
 [33m| Resources: ["rCloudWatchLogsAgentGroup"][0m
-[33m| Line Numbers: [1288][0m
+[33m| Line Numbers: [1347][0m
 [33m|[0m
 [33m| CloudWatchLogs LogGroup should specify a KMS Key Id to encrypt the log data[0m
+ Notes: Password and other security sensitive information are not kept in the logs. This has been reviewed and deemed an acceptable risk.
 ------------------------------------------------------------
 [33m| WARN W28[0m
 [33m|[0m
 [33m| Resources: ["rClientInstanceSecurityGroup", "rStateMachineExecutionRole", "rLambdaExecutionRole", "rClientInstanceRole"][0m
-[33m| Line Numbers: [770, 110, 338, 1217][0m
+[33m| Line Numbers: [806, 110, 338, 1264][0m
 [33m|[0m
 [33m| Resource found with an explicit name, this disallows updates that require replacement of this resource[0m
+ Notes: The CF template has been tested and this may change in the future. This has been reviewed and deemed an acceptable risk.
+------------------------------------------------------------
+[33m| WARN W76[0m
+[33m|[0m
+[33m| Resources: ["rClientInstanceRole"][0m
+[33m| Line Numbers: [1264][0m
+[33m|[0m
+[33m| SPCM for IAM policy document is higher than 25[0m
+ Notes: The addition of a condition within the IAM policy has pushed the SPCM score above the threshold. However this is necessary to scope the permissions to the account and region that it is deployed in.
 ------------------------------------------------------------
 [33m| WARN W77[0m
 [33m|[0m
 [33m| Resources: ["rInitialHsmCryptoOfficerSecret"][0m
-[33m| Line Numbers: [759][0m
+[33m| Line Numbers: [795][0m
 [33m|[0m
 [33m| Secrets Manager Secret should explicitly specify KmsKeyId. Besides control of the key this will allow the secret to be shared cross-account[0m
+ Notes: Uses the `DefaultEncryptionKey` provisioned on the accounts behalf by Secrets Manager. This has been reviewed and deemed an acceptable risk.
+------------------------------------------------------------
+[33m| WARN W5[0m
+[33m|[0m
+[33m| Resources: ["rClientInstanceSecurityGroup"][0m
+[33m| Line Numbers: [806][0m
+[33m|[0m
+[33m| Security Groups found with cidr open to world on egress[0m
+ Notes: The CIDR range is open because this solution uses various package and artifact repositories that make it hard to statically limit to a range of IPs.
+        The egress ports have been limited to 80, 443, and 2223-2225. This may be revisited at a future date, however this has been reviewed and deemed an acceptable risk.
+------------------------------------------------------------
+[33m| WARN W29[0m
+[33m|[0m
+[33m| Resources: ["rClientInstanceSecurityGroup"][0m
+[33m| Line Numbers: [806][0m
+[33m|[0m
+[33m| Security Groups found egress with port range instead of just a single port[0m
+ Notes: The Egress port range (2223-2225) rule for rClientInstanceSecurityGroup is needed in order to work with AWS CloudHSM and HSMs.
+        The AWS CloudHSM document (https://docs.aws.amazon.com/cloudhsm/latest/userguide/configure-sg-client-instance.html) indicates this.
+        This has been reviewed and deemed an acceptable risk.
 
 Failures count: 0
-Warnings count: 27
+Warnings count: 30

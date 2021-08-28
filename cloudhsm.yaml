@@ -355,28 +355,59 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - iam:CreateServiceLinkedRole
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:CreateSecurityGroup
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DeleteSecurityGroup
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                  - ec2:Describe*
-                  - ec2:AuthorizeSecurityGroup*
-                  - ec2:RevokeSecurityGroup*
-                  - ec2:CreateSecurityGroup
-                  - ec2:DeleteSecurityGroup
-                  - ec2:CreateNetworkInterface
-                  - ec2:CreateTags
-                  - ec2:DeleteNetworkInterface
-                  - ec2:DetachNetworkInterface
-                  - cloudhsm:*
-                  - states:*
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*'
+              - Effect: Allow
+                Action:
+                  - states:DescribeStateMachine
+                  - states:StartExecution
+                  - states:DeleteStateMachine
+                  - states:ListExecutions
+                  - states:UpdateStateMachine
+                Resource:
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:CreateCluster
+                  - cloudhsm:DeleteCluster
+                  - cloudhsm:DeleteHsm
+                  - cloudhsm:CreateHsm
+                  - cloudhsm:DeleteHsm
+                  - cloudhsm:DescribeClusters
+                  - cloudhsm:InitializeCluster
+                  - cloudhsm:DescribeClusters
+                  - cloudhsm:DescribeHsm
+                  - cloudhsm:DescribeBackups
+                  - cloudhsm:ListTags
+                  - cloudhsm:TagResource
+                  - cloudhsm:UntagResource
                 Resource:
                   - '*'
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: F3
-            reason: Some of the allowed actions require wildcarded resources
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
   
   rCustomResourceCloudHsmCluster:
     Type: AWS::Lambda::Function
@@ -647,6 +678,11 @@ Resources:
           def lambda_handler(event, context):
               print(event)
               cluster_id = event['PhysicalResourceId']
+              hsm_sg = HSM.describe_clusters(Filters={"clusterIds": [cluster_id]})["Clusters"][0]["SecurityGroup"]
+              sg_rules = EC2.describe_security_group_rules(Filters=[{"Name": "group-id", "Values": [hsm_sg]}])["SecurityGroupRules"]
+              print('Removing SG rules ' + str(sg_rules))
+              EC2.revoke_security_group_egress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if i["IsEgress"]])
+              EC2.revoke_security_group_ingress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if not i["IsEgress"]])
               print('Deleting Cluster ' + str(cluster_id))
               HSM.delete_cluster(ClusterId=cluster_id)
               sg = EC2.describe_security_groups(Filters=[{'Name': 'tag:hsm_cluster_id', 'Values': [cluster_id]}])['SecurityGroups']
@@ -772,15 +808,26 @@ Resources:
       GroupName: !Sub '${pSystem}-client-${rCloudHsmCluster.cluster_id}'
       GroupDescription: Client Instance Security Group
       VpcId: !Ref pVpcId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          Description: HTTP outbound
+          FromPort: 80
+          ToPort: 80
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          Description: HTTPS outbound
+          FromPort: 443
+          ToPort: 443
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          Description: Access to HSM
+          FromPort: 2223
+          ToPort: 2225
       Tags:
         - Key: hsm_cluster_id
           Value: !Sub '${rCloudHsmCluster.cluster_id}'
     DeletionPolicy: Retain
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: F1000
-            reason: Requires outbound access to multiple package repositories. Once provisioned the EC2 instances will be shutdown to reduce surface area of attack and cost
 
   rClientInstance:
     Type: AWS::EC2::Instance
@@ -1241,7 +1288,6 @@ Resources:
                   - ec2:Describe*
                   - ec2:AuthorizeSecurityGroup*
                   - ec2:RevokeSecurityGroupEgress
-                  - ec2:Describe*
                   - ec2:AuthorizeSecurityGroup*
                   - ec2:RevokeSecurityGroup*
                   - ec2:CreateSecurityGroup
@@ -1251,15 +1297,24 @@ Resources:
                   - ec2:DeleteNetworkInterface
                   - ec2:DetachNetworkInterface
                 Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
               - Effect: Allow
                 Action:
                   - cloudhsm:CreateCluster
                   - cloudhsm:CreateHsm
                   - cloudhsm:Describe*
                   - cloudhsm:InitializeCluster
+                  - cloudhsm:ModifyCluster
                   - cloudhsm:TagResource
                   - cloudhsm:ListTags
                 Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
               - Effect: Allow
                 Action:
                   - kms:CreateCustomKeyStore
@@ -1271,6 +1326,10 @@ Resources:
                   - iam:CreateServiceLinkedRole
                   - secretsmanager:ListSecrets
                 Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
               - Effect: Allow
                 Action:
                   - secretsmanager:DescribeSecret

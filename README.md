@@ -229,6 +229,23 @@ After you've manually disconnected the KMS custom key store, you can manually de
 
 While the custom key store is in a connected state, there will be an ENI for each of the former HSMs and the cluster security group will be associated with those ENIs. Until you disconnect the key store, the ENIs will continue to exist and be a dependency on the cluster security group.
 
+## Security Review
+
+A security review has been performed on the cloudformation templates in this source code repo. This solution assumes that AWS CloudHSM(s) and AWS KMS custom key store(s) will be deployed under the following conditions:
+- One AWS CloudHSM will be deployed per account and region
+- EC2 instance that interact AWS CloudHSM cluster and HSM instances will be `stopped` once management has been completed
+  - EC2 instance can be powered back on (`running` state) when management of AWS CloudHSM cluster and HSM instances are needed
+  - security patching of EC2 instance can be updated with the cloudhsm.yaml
+  - Access to the EC2 instance is only allowed through AWS Systems Manager (SSM) Session
+  - The EC2 instance is launched only in an AWS private subnet (i.e. one with a route to the internet but not publicly addressable IP)
+- Interaction with AWS CloudHSM during normal operation will be limited to AWS KMS custom keystore
+- Once the cloudformation template cloudhsm.yaml successfully completes and provisions a AWS CloudHSM cluster and HSM(s) the following actions need to be taken:
+  1. The `Crypto Officer/Primary Crypto Officer (CO/PCO)` password needs to be changed. The password for the initial `PCO` is kept in the AWS Secrets Manager with the Secret name `/<pSystem identifier>/<cluster id>`
+    - The pSystem identifier is one of the parameters of the cloudhsm.yaml template
+  1. Once the password is changed, it should be stored in a secure password vault.
+
+The cloudformation templates `cloudhsm.yaml` and `vpc.yaml` has been scanned by Stelligent's [cfn_nag](https://github.com/stelligent/cfn_nag) linting tool to evaluate vulnerabilities. All `failing` violations has been resolved but `warning` findings have been left intact to inform users of potential security findings that should be reviewed before using. For a complete report of these warnings and notes on why they were not eliminated please refer to the security folder.
+
 ## Troubleshooting Stack Creation
 
 If you notice that stack creation fails on creation of the `rClientInstance` EC2 client instance resource, you should inspect the content of the `cfn-init.log` log file produced by the EC2 client instance. 
