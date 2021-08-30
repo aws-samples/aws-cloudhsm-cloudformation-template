@@ -398,7 +398,6 @@ Resources:
                   - ec2:AuthorizeSecurityGroupEgress
                   - ec2:AuthorizeSecurityGroupIngress
                   - ec2:CreateSecurityGroup
-                  - ec2:RevokeSecurityGroupEgress
                   - ec2:CreateNetworkInterface
                   - ec2:DeleteNetworkInterface
                   - ec2:DeleteSecurityGroup
