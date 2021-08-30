@@ -103,6 +103,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt rCustomResourceCloudHsmCluster.Arn
       VPC_Id: !Ref pVpcId
+      p_system: !Ref pSystem
       CreateSFN_function: !Ref rStateMachineCreateCluster
       DeleteSFN_function: !Ref rStateMachineDeleteCluster
 
@@ -241,9 +242,45 @@ Resources:
       StateMachineName: !Sub '${pSystem}-delete-cluster'
       DefinitionString: !Sub |-
         {
-          "Comment": "Deletes CloudHSM cluster as provided by PhysicalResourceId",
-          "StartAt": "GetClusterInfo",
+          "Comment": "Disconnects KMS Custom KMS key store and deletes CloudHSM cluster as provided by PhysicalResourceId",
+          "StartAt": "DisconnectKMS",
           "States": {
+            "DisconnectKMS": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDisconnectKms}",
+              "Next": "wait_for_KMS_Disconnect",
+              "ResultPath": "$.kms_custom_keystore_id",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
+            },
+            "wait_for_KMS_Disconnect": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "GetKMSStatus"
+            },
+            "GetKMSStatus": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetKmsStatus}",
+              "Next": "KmsDisconnected?",
+              "ResultPath": "$.KMS_State",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
+            },
+            "KmsDisconnected?": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.KMS_State",
+                "StringEquals": "DISCONNECTED",
+                "Next": "GetClusterInfo"
+              }],
+              "Default": "wait_for_KMS_Disconnect"
+            },
             "GetClusterInfo": {
               "Type": "Pass",
               "Next": "DeleteHSM"
@@ -361,10 +398,11 @@ Resources:
                   - ec2:AuthorizeSecurityGroupEgress
                   - ec2:AuthorizeSecurityGroupIngress
                   - ec2:CreateSecurityGroup
-                  - ec2:RevokeSecurityGroupEgress
                   - ec2:CreateNetworkInterface
                   - ec2:DeleteNetworkInterface
                   - ec2:DeleteSecurityGroup
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
                 Resource:
                   - '*'
                 Condition:
@@ -404,6 +442,21 @@ Resources:
                   - cloudhsm:UntagResource
                 Resource:
                   - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - kms:CreateCustomKeyStore
+                  - kms:DeleteCustomKeyStore
+                  - kms:ConnectCustomKeyStore
+                  - kms:DescribeCustomKeyStores
+                  - kms:UpdateCustomKeyStore
+                  - kms:DisconnectCustomKeyStore
+                  - kms:UpdateCustomKeyStore
+                  - kms:Decrypt
+                Resource: '*'
                 Condition:
                   'ForAllValues:StringEquals':
                     'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
@@ -561,6 +614,68 @@ Resources:
       Timeout: 20
       Role: !GetAtt rLambdaExecutionRole.Arn
 
+  rLambdaGetKmsStatus:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-get-kms-status'  
+      Code:
+        ZipFile: |
+            import json
+            import boto3
+            HSM = boto3.client('cloudhsmv2')
+            KMS = boto3.client('kms')
+
+            def lambda_handler(event, context):
+                print(event)
+                if event['RequestType'] == 'Create':
+                    cluster_id = event['cluster_id']
+                    p_system = event['ResourceProperties']['p_system']
+                    state = KMS.describe_custom_key_stores(CustomKeyStoreName="{}-{}".format(p_system, cluster_id))['CustomKeyStores'][0]['ConnectionState']
+                    print('Connection status for KMS ' + "{}-{}".format(p_system, cluster_id) + state)
+                    return state
+                elif event['RequestType'] == 'Delete':
+                    cluster_id = event['PhysicalResourceId']
+                    p_system = event['ResourceProperties']['p_system']
+                    state = KMS.describe_custom_key_stores(CustomKeyStoreName="{}-{}".format(p_system, cluster_id))['CustomKeyStores'][0]['ConnectionState']
+                    print('Connection status for KMS ' + "{}-{}".format(p_system, cluster_id) + state)
+                    return state
+
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: 20
+      Role: !GetAtt rLambdaExecutionRole.Arn
+
+  rLambdaDisconnectKms:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-disconnect-kms'  
+      Code:
+        ZipFile: |
+            import json
+            import boto3
+            HSM = boto3.client('cloudhsmv2')
+            KMS = boto3.client('kms')
+
+            def lambda_handler(event, context):
+                print(event)
+                if event['RequestType'] == 'Create':
+                    cluster_id = event['cluster_id']
+                    p_system = event['ResourceProperties']['p_system']
+                    custom_key_store = KMS.describe_custom_key_stores(CustomKeyStoreName="{}-{}".format(p_system, cluster_id))['CustomKeyStores'][0]
+                    # print('Disconnecting KMS ' + "{}-{}".format(p_system, cluster_id))
+                    # KMS.disconnect_custom_key_store(CustomKeyStoreId=custom_key_store['CustomKeyStoreId'])
+                elif event['RequestType'] == 'Delete':
+                    cluster_id = event['PhysicalResourceId']
+                    p_system = event['ResourceProperties']['p_system']
+                    custom_key_store = KMS.describe_custom_key_stores(CustomKeyStoreName="{}-{}".format(p_system, cluster_id))['CustomKeyStores'][0]
+                    print('Disconnecting KMS ' + "{}-{}".format(p_system, cluster_id))
+                    KMS.disconnect_custom_key_store(CustomKeyStoreId=custom_key_store['CustomKeyStoreId'])
+                    return custom_key_store['CustomKeyStoreId']
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: 20
+      Role: !GetAtt rLambdaExecutionRole.Arn
+
   rLambdaGetClusterStatus:
     Type: AWS::Lambda::Function
     Properties:
@@ -675,20 +790,29 @@ Resources:
           import boto3
           HSM = boto3.client('cloudhsmv2')
           EC2 = boto3.client('ec2')
+          EC2_Resource = boto3.resource('ec2')
+
           def lambda_handler(event, context):
               print(event)
               cluster_id = event['PhysicalResourceId']
               hsm_sg = HSM.describe_clusters(Filters={"clusterIds": [cluster_id]})["Clusters"][0]["SecurityGroup"]
-              sg_rules = EC2.describe_security_group_rules(Filters=[{"Name": "group-id", "Values": [hsm_sg]}])["SecurityGroupRules"]
-              print('Removing SG rules ' + str(sg_rules))
-              EC2.revoke_security_group_egress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if i["IsEgress"]])
-              EC2.revoke_security_group_ingress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if not i["IsEgress"]])
+              # sg_rules = EC2.describe_security_group_rules(Filters=[{"Name": "group-id", "Values": [hsm_sg]}])["SecurityGroupRules"]
+              # Clean up dependent SG
+              sg_obj = EC2_Resource.SecurityGroup(hsm_sg)
+              print('Removing SG Ingress rules ' + str(sg_obj.ip_permissions))
+              sg_obj.revoke_ingress(IpPermissions=sg_obj.ip_permissions)
+              print('Removing SG Egress rules ' + str(sg_obj.ip_permissions_egress))
+              sg_obj.revoke_egress(IpPermissions=sg_obj.ip_permissions_egress)
+
+              # EC2.revoke_security_group_egress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if i["IsEgress"]])
+              # EC2.revoke_security_group_ingress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if not i["IsEgress"]])
               print('Deleting Cluster ' + str(cluster_id))
               HSM.delete_cluster(ClusterId=cluster_id)
               sg = EC2.describe_security_groups(Filters=[{'Name': 'tag:hsm_cluster_id', 'Values': [cluster_id]}])['SecurityGroups']
               if sg:
                 EC2.delete_security_group(GroupId=sg[0]['GroupId'])
               return {'Deleting': cluster_id}
+
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: 20
