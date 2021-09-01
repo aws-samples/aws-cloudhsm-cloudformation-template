@@ -4,7 +4,9 @@ This AWS CloudFormation template automatically deploys an [AWS CloudHSM](https:/
 
 * [Overview](#overview)
 * [Usage](#usage)
-* [Known Issues and Limitations](#known-issues-and-limitations)
+* [Managing Security](#managing-security)
+* [Understanding Known Limitations](#understanding-known-limitations)
+* [Creating CloudFormation Stack](#creating-cloudformation-stack)
 * [Troubleshooting Stack Creation](#troubleshooting-stack-creation)
 * [Performing Post Stack Creation Steps](#performing-post-stack-creation-steps)
 * [Monitoring and Managing the Resources](#monitoring-and-managing-the-resources)
@@ -20,11 +22,9 @@ In addition to a CloudHSM cluster and HSM resources, the following resources are
 * A CloudFormation custom resource AWS Lambda function that is used to create and delete CloudHSM clusters
 * AWS Step Functions state machines to orchestrate creation and deletion of CloudHSM clusters
 * Lambda functions to support the state machines
-* An EC2 client configured to manage the cluster of HSMs
+* An EC2 client instance configured to manage the cluster of HSMs
+* A CloudHSM CA certificate is generated and stored in Secrets Manager
 * An initial crypto officer `admin` user password that is stored as a secret in AWS Secrets Manager
-* A CloudHSM trust anchor certificate
-
-Deletion of the the CloudFormation stack results in the removal of these resources.
 
 ## Usage
 
@@ -37,13 +37,15 @@ You should address the following considerations before using the CloudFormation 
 * Ensure that you're familiar with the basic architecture and operation of [AWS CloudHSM Clusters](https://docs.aws.amazon.com/cloudhsm/latest/userguide/clusters.html)
 * If you intend to use KMS custom key stores, [Using a custom key store](https://docs.aws.amazon.com/kms/latest/developerguide/custom-key-store-overview.html)
 
-#### 2. Determine the system identifier to qualify cloud resource names
+#### 2. Determine qualifier for cloud resource names
 
-If you plan to create a single CloudHSM cluster in an AWS account, you can use the default setting for the [`pSystem`](#cloudformation-template-parameters) CloudFormation template parameter.
+Determine a value for the [`pEnvPurpose`](#cloudformation-template-parameters) CloudFormation template parameter that will be used to help qualify the names of many of the cloud resources created by the CloudHSM stack.  If you intend to deploy only one instance of the stack and CloudHSM cluster in the AWS account, then you can use the default value.
 
-If you plan to use this template top create multiple CloudHSM clusters in the same AWS account, then you should set the [`pSystem`](#cloudformation-template-parameters) CloudFormation template parameter to value that will be used to distinguish the resource names associated with each cluster. For example, when testing this template, you may want to create multiple clusters and supporting cloud resources.
+Many of the resources created by the CloudHSM template will be qualified by a combination of the `pSystem` and `pEnvPurpose` parameter values. Normally, you won't need to override the value of the `pSystem` parameter, but if you intend to manage multiple CloudHSM clusters in the same account, then you will need to use the `pEnvPurpose` parameter to help distinguish the resources used to support the respective clusters. For example, if you create multiple stacks in the same account and in the same Region for testing purposes, then specify values such as `test1` vs `test2` for the `pEnvPurpose` parameter.
 
-If you intend to test creation of multiple CloudHSM clusters in a single AWS account, review [AWS CloudHSM Quotas](https://docs.aws.amazon.com/cloudhsm/latest/userguide/limits.html).
+Since the CloudHSM template automatically qualifies the names of global resources such as IAM roles with the AWS Region identifier, you do not need to include a Region identifier in the `pEnvPurpose` parameter.
+
+If you intend to create multiple CloudHSM clusters in a single AWS account, then review [AWS CloudHSM Quotas](https://docs.aws.amazon.com/cloudhsm/latest/userguide/limits.html) so that you're aware of the default upper limit of the number of clusters and HSMs you can create in each account.
 
 #### 3. Determine the number of HSMs to create
 
@@ -67,28 +69,56 @@ You'll need to determine the VPC and subnet in which an EC2 client instance that
 
 By default, the template creates a KMS custom key store and connects it to the CloudHSM cluster. If you don't plan on using KMS with your CloudHSM cluster, you can override the [`pStackScope`](#cloudformation-template-parameters) CloudFormation template parameter to specify that only the CloudHSM cluster be created.
 
-### Creating the CloudFormation stack
+## Managing Security
+
+A security review has been performed on the CloudFormation templates contained in this repository. This solution assumes that CloudHSM clusters KMS custom key store will be deployed and managed in the following manner:
+- You specify a private subnet that does not support publicly addressable IP addresses to be used for the EC2 client instance
+- You stop (not terminate) the EC2 client instance once management has been completed so that it is normally in the `stopped` state
+- You power on the EC2 client instance to the `running` state when you need to manage the CloudHSM cluster via the EC2 client instance
+- You access the EC2 client instance only through AWS Systems Manager (SSM) Session Manager
+- You take measures to either patch the EC2 client in place using AWS Systems Manager or similar or you periodically replace the EC2 client instance by updating the stack. See [Managing the EC2 client instance](#managing-the-ec2-client-instance) for details.
+- You limit interactions with the CloudHSM cluster and its HSMs during normal operations to the use of the KMS service and use of the custom key store
+- You take the following steps immediately after the CloudHSM cluster is created:
+  1. The Crypto Officer/Primary Crypto Officer (CO/PCO) password is changed
+  1. Once the password is changed, it should be stored in a secure password vault
+
+See [Performing Post Stack Creation Steps](#performing-post-stack-creation-steps) for details on managing the Crypto Officer/Primary Crypto Officer (CO/PCO) password.
+
+### Static analysis of the CloudFormation templates
+
+The CloudFormation templates `cloudhsm.yaml` and `vpc.yaml` has been scanned by Stelligent's [cfn_nag](https://github.com/stelligent/cfn_nag) static analysis tool to evaluate vulnerabilities. All `failing` violations has been resolved but `warning` findings have been left intact to inform users of potential security findings that should be reviewed before using the templates. For a complete report of these warnings and notes on why they were not resolved, see the `security/` folder.
+
+## Understanding Known Limitations
+
+CloudHSM stack update operations do not generally support modification of stack parameters except for the AMI ID if an AMI ID was originally used to create the stack.
+
+Updating other parameters, for example, the number of HSMs, is not supported via CloudHSM stack updates.
+
+## Creating CloudFormation Stack
 
 Once you've addressed the preparation steps, you're ready to create the stack.
 
-#### 1. Create the stack
+### 1. Create the stack
 
 Use the [`cloudhsm.yaml`](cloudhsm.yaml) CloudFormation template to create a new stack.
 
-##### CloudFormation Template Parameters
+#### CloudFormation Template Parameters
 
 |Parameter|Required|Description|Default|
 |---------|--------|-----------|-------|
+|`pSystem`|Optional|Used as a prefix in the names of many of the newly created cloud resources. You normally do not need to override the default value.|`cloudhsm`|
+|`pEnvPurpose`|Optional|Identifies the purpose for this particular instance of the stack. Used as part of the prefix in the names of many of the newly created resources. Enables you to create and more easily distinguish resources of multiple stacks in the same AWS account. For example, `1`, `2`, `test1`, `test2`, etc.|`1`|
 |`pStackScope`|Optional|Scope of the stack to create:<br>`with-custom-key-store`: CloudHSM cluster + EC2 client instance + KMS custom key store<br>`cluster-and-client-only`: CloudHSM cluster + EC2 client instance|`with-custom-key-store`|
 |`pVpcId`|Optional|The VPC in which the HSM Elastic Network Interfaces (ENIs) will be provisioned and in which the EC2 client instance will be deployed.|None|
-|`pNumHsms`|Optional|Number of HSMs to create in the CloudHSM cluster: `1`, `2`, or `3`|`2`|
-|`pClientInstanceSubnet`|Required|The subnet in which the EC2 client will be deployed.|None|
+|`pNumHsms`|Optional|Number of HSMs to create in the CloudHSM cluster: `1`, `2`, or `3`. When using a KMS custom key store, a minimum of 2 HSMs is required.|`2`|
+|`pBackupRetentionDays`|Optional|Number of days to retain CloudHSM cluster backups. You may specify from `7` to `379` days.|`90`|
+|`pBackupId`|Optional|ID of CloudHSM backup if you want create the cluster from a backup|None|
+|`pClientInstanceSubnet`|Required|The subnet in which the EC2 client will be deployed|None|
 |`pClientInstanceType`|Optional|Instance type to use for the EC2 client|`t3a.small`|
 |`pClientInstanceAmiSsmParameter`|Optional|SSM parameter name for EC2 AMI to use for the EC2 client.|`/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs`|
-|`pClientInstanceAmiId`|Optional|ID of EC2 AMI to use for the EC2 client.<br><br>Overrides `pClientInstanceAmiSsmParameter` when present.|None|
-|`pSystem`|Optional|Used to qualify cloud resource names. Override if you expect to have multiple instances of the stack in the same AWS account.|`cloudhsm`|
+|`pClientInstanceAmiId`|Optional|ID of EC2 AMI to use for the EC2 client.<br><br>Overrides `pClientInstanceAmiSsmParameter` when present.<br><br>If you desire to have direct control over the AMI in use, specify this parameter.|None|
 
-#### 2. Monitor progress of stack creation
+### 2. Monitor progress of stack creation
 
 Typically, creation of the stack will take from ~10 to ~50 minutes depending on the number of HSMs to be created and whether or not a KMS custom key store is created and connected to the cluster.
 
@@ -107,16 +137,15 @@ The general order in which cloud resources are created is as follows:
   * An EC2 UserData script is used in conjunction with [`AWS::CloudFormation::Init`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-init.html) to bootstrap the CloudHSM client instance
     * CloudWatch agent is configured
     * Package dependencies are installed
-    * CloudHSM cluster certificate is generated
+    * CloudHSM cluster certificate is generated and stored in AWS Secrets Manager
     * CloudHSM cluster is initialized
     * CloudHSM client service is started
-    * CloudHSM cluster CO password is set and cluster is activated
-    * HSMs are added as necessary
-    * Optionally, `kmsuser` is added to the cluster and KMS custom key store is created and connected to the cluster
+    * An initial value for the CloudHSM cluster crypto officer password is set and stored in Secrets Manager
+    * CloudHSM cluster is activated
+    * Additional HSMs are added as necessary per the value of the parameter `pNumHsms`
+    * Optionally, a `kmsuser` is added to the cluster and KMS custom key store is created and connected to the cluster
 
-Deletion of the stack generally reverses this process. When the CloudFormation custom resource is called with the `delete` action, a CloudHSM cluster delete state machine is executed to delete the HSMs and the cluster.
-
-##### Monitoring Step Functions state machines
+#### Monitoring Step Functions state machines
 
 During creation of the stack, you can open the AWS Step Functions console and select the cluster creation state machine to monitor progress of the creation of the cluster and the first HSM.
 
@@ -130,7 +159,7 @@ Since the processes required to create and delete clusters and HSMs may take lon
 
 <img src="images/state-machine-delete-cluster.png" alt="Step Functions delete state machine" width="200"/>
 
-##### Monitoring EC2 client instance configuration
+#### Monitoring EC2 client instance configuration
 
 After the CloudHSM cluster and initial HSM are created via the Step Function state machine, the other long duration task is the configuration of the EC2 client instance.
 
@@ -161,34 +190,36 @@ Once you're in the terminal session:
 
 When you're in the terminal session, you can also review the content of the working directory used by the automation scripts. See the directory `/root/cloudhsm-work/` for the working content.
 
-#### 3. Inspect the created resources
+### 3. Inspect the created resources
 
 Once the stack has been created, you can tour the environment to review the cloud resources. For example:
 
-##### Inspect CloudHSM cluster
+#### Inspect CloudHSM cluster
 
 Access the CloudHSM console to view the CloudHSM cluster and HSMs.
 * The state of the cluster and the associated HSM(s) should be `Active`
 * Note the ENI IP address(es), AZs, and subnets in use
 * Selecting `Backups` will show several backups already created due to the fact that changes were made to the cluster during initial provisioning
 
-##### Inspect KMS custom key store (optional)
+#### Inspect KMS custom key store (optional)
 
 If you specified creation of a KMS custom key store, access the KMS console to view the custom key store. 
 
 The key store should have a status of `CONNECTED` and the number of HSMs should equal the number of HSMs created in your cluster
 
-##### Inspect Elastic Network Interfaces (ENIs)
+#### Inspect contents of Secrets Manager
+
+Access the Secrets Manager console to view the generated secrets associated with the cluster.
+* Initial crypto officer password
+* Customer CA certificate used to connect the EC2 client instance to the cluster
+
+#### Inspect Elastic Network Interfaces (ENIs)
 
 Access the EC2 console and select Network Interfaces to inspect the ENIs that were created. Review the Description field.
 * A CloudHSM managed ENI should be present for each HSM
 * If you specified creation of a KMS custom key store, a KMS managed ENI should be present for each HSM
 
-##### Inspect initial Crypto Office (CO) `admin` user's password
-
-Access the Secrets Manager console to review the initial Crypto Officer`admin` user's secret and associated password value.
-
-##### Inspect CloudHSM via the CloudHSM Management Utility
+#### Inspect CloudHSM via the CloudHSM Management Utility
 
 The EC2 client instance has been configured with the [CloudHSM Management Utility (CMU)](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cloudhsm_mgmt_util.html) to support ongoing inspection and configuration of your cluster.  You can use the `cloudhsm_mgmt_util` CLI to execute the CMU.
 
@@ -202,49 +233,6 @@ Once you're in the terminal session:
   * `getHSMInfo` - Lists details of each HSM
   * `listUsers` - Lists users defined on each HSM. The set of users should be identical across HSMs.
   * `info server 0` - List details of each HSM. Replace `0` with the index of the HSM of interest.
-
-## Known Issues and Limitations
-
-### Deletion of stack may fail due to dependency violation with the EC2 client instance security group
-
-When stack deletion fails on the `rClientInstanceSecurityGroup`, you can attempt to delete the stack a second time, but opt to leave the security group intact. After the stack has been deleted, you can address the dependency and then manually delete the security group.
-
-1. Access "Security Groups" in the EC2 Console.
-2. Look for the security group associated with the CloudHSM cluster.
-3. Edit the inbound rules and delete the reference to the EC2 client instance security group.
-4. Delete both the EC2 client instance security group.
-
-### Deletion of stack doesn't delete the KMS custom key store
-
-Since the KMS custom key store is created via the AWS CLI during first boot of the EC2 client instance, this resource is not managed via CloudFormation and not automatically deleted during deletion of the stack.
-
-You can manually delete the custom key store via the KMS console or AWS CLI.  
-
-1. Disconnect the key store from the CloudHSM cluster. The associated ENIs used to enable the custom key store to connect to the HSMs will be automatically deleted.
-2. After the key store is disconnected, you can delete the key store.
-
-### Deletion of stack doesn't delete the security group associated with the CloudHSM cluster
-
-After you've manually disconnected the KMS custom key store, you can manually delete the security group associated with the CloudHSM cluster.
-
-While the custom key store is in a connected state, there will be an ENI for each of the former HSMs and the cluster security group will be associated with those ENIs. Until you disconnect the key store, the ENIs will continue to exist and be a dependency on the cluster security group.
-
-## Security Review
-
-A security review has been performed on the cloudformation templates in this source code repo. This solution assumes that AWS CloudHSM(s) and AWS KMS custom key store(s) will be deployed under the following conditions:
-- One AWS CloudHSM will be deployed per account and region
-- EC2 instance that interact AWS CloudHSM cluster and HSM instances will be `stopped` once management has been completed
-  - EC2 instance can be powered back on (`running` state) when management of AWS CloudHSM cluster and HSM instances are needed
-  - security patching of EC2 instance can be updated with the cloudhsm.yaml
-  - Access to the EC2 instance is only allowed through AWS Systems Manager (SSM) Session
-  - The EC2 instance is launched only in an AWS private subnet (i.e. one with a route to the internet but not publicly addressable IP)
-- Interaction with AWS CloudHSM during normal operation will be limited to AWS KMS custom keystore
-- Once the cloudformation template cloudhsm.yaml successfully completes and provisions a AWS CloudHSM cluster and HSM(s) the following actions need to be taken:
-  1. The `Crypto Officer/Primary Crypto Officer (CO/PCO)` password needs to be changed. The password for the initial `PCO` is kept in the AWS Secrets Manager with the Secret name `/<pSystem identifier>/<cluster id>`
-    - The pSystem identifier is one of the parameters of the cloudhsm.yaml template
-  1. Once the password is changed, it should be stored in a secure password vault.
-
-The cloudformation templates `cloudhsm.yaml` and `vpc.yaml` has been scanned by Stelligent's [cfn_nag](https://github.com/stelligent/cfn_nag) linting tool to evaluate vulnerabilities. All `failing` violations has been resolved but `warning` findings have been left intact to inform users of potential security findings that should be reviewed before using. For a complete report of these warnings and notes on why they were not eliminated please refer to the security folder.
 
 ## Troubleshooting Stack Creation
 
@@ -275,9 +263,11 @@ You will use the [CloudHSM Management Utility](https://docs.aws.amazon.com/cloud
 7. Specify the password
 8. Enter `quit` to quit the CMU
 
-At this stage, you can optionally delete the secret from Secrets Manager given that the initial password is no longer in use.
+You should store the new password in your standard enterprise password vault.
 
-Note that if you requested creation of a KMS custom key store, KMS has already changed the initial password for the `kmsuser` across the HSMs.
+At this stage, you can optionally delete the secret from Secrets Manager given that the initial password is no longer needed for operation of the cluster.
+
+If you requested creation of a KMS custom key store, KMS has already changed the initial password for the `kmsuser` across the HSMs.
 
 ## Monitoring and Managing the Resources
 
@@ -290,8 +280,32 @@ See the following resources for information on monitoring and managing your Clou
 
 ### Managing the EC2 client instance
 
-Although the EC2 client does not need to be running in order for KMS custom key stores to operated against your CloudHSM cluster, you will want to ensure that your EC2 client instance is kept up-to-date with necessary OS patches.
+#### Stopping the EC2 client when not in use
+
+After a cluster has been activated, the EC2 client is not required for the optional KMS custom key store to use the cluster. Consequently, you have the option to stop (not terminate) the EC2 client instance and restart it only when you either need to update it or use the CloudHSM management utility to inspect the configuration of the cluster.
+
+#### Keeping the EC2 client up-to-date
+
+Although the EC2 client does not need to be running in order for KMS custom key stores to operated against your CloudHSM cluster, you will want to ensure that your EC2 client instance is kept up-to-date with necessary operating system patches.
 
 You should also monitor the availability of new releases of the CloudHSM Management Utility (CMU) and consider updating it over time. See [Install and Configure the AWS CloudHSM Client (Linux)](https://docs.aws.amazon.com/cloudhsm/latest/userguide/install-and-configure-client-linux.html).
 
-Given the configuration of the EC2 client instance, you should use your standard practices to backup the EC2 instance so that you can restore it in the future in case the EC2 instance is inadvertently deleted or becomes unavailable.
+#### Replacing the EC2 client instance
+
+If you specified an AMI ID during stack creation, you can perform a stack update using a different AMI ID to force replacement of the EC2 client instance. During the replacement process, the new EC2 client instance will be configured with the latest available software packages.
+
+During the stack update process, CloudFormation will create a new EC2 client instance. The first boot automation process in the new EC2 client instance will recognize the presence of the previously generated customer CA certificate in Secrets Manager and use the certificate to help configure the client instance. Once the new EC2 client instance has been created, CloudFormation will terminate the old EC2 client instance.
+
+### Deleting the CloudHSM cluster
+
+Deletion of the stack generally reverses the process described earlier. When the CloudFormation custom resource is called with the `delete` action, a CloudHSM cluster delete state machine is executed to delete the HSMs and the cluster.
+
+If a KMS custom key store had been created as part of the stack, the key store will be disconnected, but not deleted during deletion of the stack.  As long as backups of the CloudHSM cluster exist, you have the option to create a new cluster from a backup and connect the key store to the new cluster.
+
+An entry in Secrets Manager containing the customer CA certificate associated with the creation of the cluster will be preserved so that the certificate can be reused in the event that you create a new cluster from a backup.  
+
+### Creating a CloudHSM cluster from a backup
+
+The CloudFormation template supports the ability to create a new CloudHSM cluster from a backup.  As long as at least one backup from a cluster exists, you can create a new stack while specifying the ID of the backup of interest. If you specify a valid backup ID via the parameter `pBackupId` during stack creation, the stack creation process will use the specified backup to create a new cluster.
+
+If you're creating a new cluster from a backup with which a KMS custom key store was previously connected, ensure that the backup you select contains the KMS key data that you require to be present in your newly created cluster.

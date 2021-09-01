@@ -7,6 +7,11 @@ Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
+          default: Resource Naming Qualifiers
+        Parameters:
+          - pSystem
+          - pEnvPurpose
+      - Label:
           default: Scope of Stack
         Parameters:
           - pStackScope
@@ -15,6 +20,8 @@ Metadata:
         Parameters:
           - pVpcId
           - pNumHsms
+          - pBackupRetentionDays
+          - pBackupId
       - Label:
           default: EC2 Client Instance Configuration
         Parameters:
@@ -22,18 +29,22 @@ Metadata:
           - pClientInstanceType
           - pClientInstanceAmiSsmParameter
           - pClientInstanceAmiId
-      - Label:
-         default: Resource Naming Qualifier
-        Parameters:
-          - pSystem
 
     ParameterLabels:
+      pSystem:
+        default: System identifier used to qualify cloud resource names
+      pEnvPurpose:
+        default: Environment identifier used to qualify cloud resource names
       pStackScope:
         default: Scope of stack to create
       pVpcId:
         default: ID of the VPC in which to launch the CloudHSM cluster
       pNumHsms:
         default: Number of HSMs
+      pBackupRetentionDays:
+        default: Number of days to retain backups (specify 7 to 379)
+      pBackupId:
+        default: ID of CloudHSM cluster backup. Specify when creating cluster from a backup.
       pClientInstanceSubnet:
         default: ID of the subnet in which to launch the client instance
       pClientInstanceType:
@@ -42,13 +53,21 @@ Metadata:
         default: SSM Parameter Name for EC2 Amazon Machine Image (AMI) for the client instance
       pClientInstanceAmiId:
         default: ID for EC2 Amazon Machine Image (AMI) for the client instance
-      pSystem:
-        default: System identifier used to qualify cloud resource names
 
 Parameters:
-  pStackScope:
+  pSystem:
+    Description: Used to prefix many of the cloud resource names. You can normally use the default value.
     Type: String
+    Default: cloudhsm
+
+  pEnvPurpose:
+    Description: Used to qualify many of the cloud resource names so that you can more easily manage multiple stacks in the same AWS account
+    Type: String
+    Default: '1'
+
+  pStackScope:
     Description:  "Scope of the stack to create: 'with-custom-key-store': CloudHSM cluster + EC2 client instance + KMS custom key store; 'cluster-and-client-only': CloudHSM cluster + EC2 client instance"
+    Type: String
     Default: with-custom-key-store
     AllowedValues:
       - with-custom-key-store
@@ -59,26 +78,34 @@ Parameters:
     Type: AWS::EC2::VPC::Id
 
   pNumHsms:
-    Type: String
-    Default: 2
     Description: Number of HSMs to create in the CloudHSM cluster
+    Type: Number
+    Default: 2
     AllowedValues:
     - 1
     - 2
     - 3
+
+  pBackupRetentionDays:
+    Description: Number of days to retain CloudHSM cluster backups (specify 7 to 379)
+    Type: Number
+    MinValue: 7
+    MaxValue: 379
+    Default: 90
+
+  pBackupId:
+    Description: ID of CloudHSM cluster backup. Specify when creating cluster from a backup.
+    Type: String
+    Default: ''   
 
   pClientInstanceSubnet:
     Description: ID of the subnet in which to launch the client instance
     Type: AWS::EC2::Subnet::Id
 
   pClientInstanceType:
+    Description: Enter t3a.small, t3a.medium. The EC2 instance is a critical component for automating the provisioning.
     Type: String
-    AllowedValues:
-      - t3a.small
-      - t3a.medium
     Default: t3a.small
-    Description: >-
-      Enter t3a.small, t3a.medium. The EC2 instance is a critical component for automating the provisioning.
 
   pClientInstanceAmiSsmParameter:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -86,13 +113,8 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs
 
   pClientInstanceAmiId:
-    Type: String
     Description: ID for EC2 Amazon Machine Image (AMI) for the client instance (Optional. When specified, overrides SSM parameter)
-
-  pSystem:
     Type: String
-    Description: Used to qualify resource names. Override if you expect to have multiple instances of the stack in the same AWS account.
-    Default: cloudhsm
 
 Conditions:
   cUseAmiId: !Not [!Equals [ !Ref 'pClientInstanceAmiId', '' ] ]
@@ -103,13 +125,17 @@ Resources:
     Properties:
       ServiceToken: !GetAtt rCustomResourceCloudHsmCluster.Arn
       VPC_Id: !Ref pVpcId
+      Backup_Retention_Days: !Ref pBackupRetentionDays
+      Backup_Id: !Ref pBackupId
+      SystemId: !Ref pSystem
+      EnvPurpose: !Ref pEnvPurpose
       CreateSFN_function: !Ref rStateMachineCreateCluster
       DeleteSFN_function: !Ref rStateMachineDeleteCluster
 
   rStateMachineExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${pSystem}-svc-stepfunctions'
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-step-functions'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -132,7 +158,7 @@ Resources:
   rStateMachineCreateCluster:
     Type: AWS::StepFunctions::StateMachine
     Properties:
-      StateMachineName: !Sub '${pSystem}-create-cluster'
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-create-cluster'
       DefinitionString: !Sub |-
         {
           "Comment": "Creates a CloudHSM and initializes it",
@@ -175,6 +201,11 @@ Resources:
                 {
                   "Variable": "$.Clusterstatus",
                   "StringEquals": "UNINITIALIZED",
+                  "Next": "ConfigHSM"
+                },
+                {
+                  "Variable": "$.Clusterstatus",
+                  "StringEquals": "ACTIVE",
                   "Next": "ConfigHSM"
                 }
               ],
@@ -238,12 +269,48 @@ Resources:
   rStateMachineDeleteCluster:
     Type: AWS::StepFunctions::StateMachine
     Properties:
-      StateMachineName: !Sub '${pSystem}-delete-cluster'
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-delete-cluster'
       DefinitionString: !Sub |-
         {
-          "Comment": "Deletes CloudHSM cluster as provided by PhysicalResourceId",
-          "StartAt": "GetClusterInfo",
+          "Comment": "Disconnects KMS Custom KMS key store and deletes CloudHSM cluster as provided by PhysicalResourceId",
+          "StartAt": "DisconnectKMS",
           "States": {
+            "DisconnectKMS": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDisconnectKms}",
+              "Next": "wait_for_KMS_Disconnect",
+              "ResultPath": "$.kms_custom_keystore_id",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
+            },
+            "wait_for_KMS_Disconnect": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "GetKMSStatus"
+            },
+            "GetKMSStatus": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetKmsStatus}",
+              "Next": "KmsDisconnected?",
+              "ResultPath": "$.KMS_State",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "CFNError",
+                "ResultPath": "$.error"
+              }]
+            },
+            "KmsDisconnected?": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.KMS_State",
+                "StringEquals": "DISCONNECTED",
+                "Next": "GetClusterInfo"
+              }],
+              "Default": "wait_for_KMS_Disconnect"
+            },
             "GetClusterInfo": {
               "Type": "Pass",
               "Next": "DeleteHSM"
@@ -337,7 +404,7 @@ Resources:
   rLambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${pSystem}-svc-lambda'
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -361,10 +428,11 @@ Resources:
                   - ec2:AuthorizeSecurityGroupEgress
                   - ec2:AuthorizeSecurityGroupIngress
                   - ec2:CreateSecurityGroup
-                  - ec2:RevokeSecurityGroupEgress
                   - ec2:CreateNetworkInterface
                   - ec2:DeleteNetworkInterface
                   - ec2:DeleteSecurityGroup
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
                 Resource:
                   - '*'
                 Condition:
@@ -408,11 +476,26 @@ Resources:
                   'ForAllValues:StringEquals':
                     'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
                     'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - kms:CreateCustomKeyStore
+                  - kms:DeleteCustomKeyStore
+                  - kms:ConnectCustomKeyStore
+                  - kms:DescribeCustomKeyStores
+                  - kms:UpdateCustomKeyStore
+                  - kms:DisconnectCustomKeyStore
+                  - kms:UpdateCustomKeyStore
+                  - kms:Decrypt
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
   
   rCustomResourceCloudHsmCluster:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-cluster-cfn-custom-resource'      
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-cluster-cfn-custom-resource'      
       Code:
         ZipFile: |
           import boto3
@@ -495,7 +578,7 @@ Resources:
   rLambdaCreateCluster:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-create-cluster'  
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-create-cluster'  
       Code:
         ZipFile: |
               import json
@@ -531,6 +614,8 @@ Resources:
               def lambda_handler(event, context):
                   print(event)
                   target_vpc = event['ResourceProperties']['VPC_Id']
+                  backup_retention_days = event['ResourceProperties']['Backup_Retention_Days']
+                  backup_id = event['ResourceProperties']['Backup_Id']
                   subnets_and_az = dict()
                   region = boto3.session.Session().region_name
 
@@ -552,7 +637,15 @@ Resources:
                   subnets = list(subnets_and_az.values())
                   # At most one subnet is allowed per availability zone when creating cluster.
                   print('Subnets ' + str(subnets) + ' are unique per-az found in the VPC ' + str(target_vpc))
-                  Cluster = HSM.create_cluster(SubnetIds=subnets,HsmType='hsm1.medium')
+                  
+                  backup_retention_policy = {'Type': 'DAYS', 'Value': backup_retention_days}
+
+                  args = { 'SubnetIds': subnets, 'HsmType': 'hsm1.medium', 'BackupRetentionPolicy': backup_retention_policy }
+                  if backup_id:
+                    args['SourceBackupId'] = backup_id
+
+                  Cluster = HSM.create_cluster(**args)
+
                   cluster_id = Cluster['Cluster']['ClusterId']
 
                   return cluster_id
@@ -564,7 +657,7 @@ Resources:
   rLambdaGetClusterStatus:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-get-cluster-status'  
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-cluster-status'  
       Code:
         ZipFile: |
             import json
@@ -594,7 +687,7 @@ Resources:
   rLambdaCreateHsm:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-create-hsm'  
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-create-hsm'  
       Code:
         ZipFile: |
           import json
@@ -632,7 +725,7 @@ Resources:
   rLambdaGetHsmStatus:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-get-hsm-status'  
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-hsm-status'  
       Code:
         ZipFile: |
           import json
@@ -665,29 +758,98 @@ Resources:
       Timeout: 20
       Role: !GetAtt rLambdaExecutionRole.Arn
 
+  rLambdaDisconnectKms:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-disconnect-kms'  
+      Code:
+        ZipFile: |
+            import json
+            import boto3
+            HSM = boto3.client('cloudhsmv2')
+            KMS = boto3.client('kms')
+
+            def lambda_handler(event, context):
+                print(event)
+                system_id = event['ResourceProperties']['SystemId']
+                env_purpose = event['ResourceProperties']['EnvPurpose']
+                key_store_name="{}-{}".format(system_id, env_purpose)
+                if event['RequestType'] == 'Create':
+                    cluster_id = event['cluster_id']
+                    custom_key_store = KMS.describe_custom_key_stores(CustomKeyStoreName=key_store_name)['CustomKeyStores'][0]
+                    # print('Disconnecting key store: ' + key_store_name)
+                    # KMS.disconnect_custom_key_store(CustomKeyStoreId=custom_key_store['CustomKeyStoreId'])
+                elif event['RequestType'] == 'Delete':
+                    cluster_id = event['PhysicalResourceId']
+                    custom_key_store = KMS.describe_custom_key_stores(CustomKeyStoreName=key_store_name)['CustomKeyStores'][0]
+                    print('Disconnecting key store: ' + key_store_name)
+                    KMS.disconnect_custom_key_store(CustomKeyStoreId=custom_key_store['CustomKeyStoreId'])
+                    return custom_key_store['CustomKeyStoreId']
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: 20
+      Role: !GetAtt rLambdaExecutionRole.Arn
+
+  rLambdaGetKmsStatus:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-kms-status'  
+      Code:
+        ZipFile: |
+            import json
+            import boto3
+            HSM = boto3.client('cloudhsmv2')
+            KMS = boto3.client('kms')
+
+            def lambda_handler(event, context):
+                print(event)
+                system_id = event['ResourceProperties']['SystemId']
+                env_purpose = event['ResourceProperties']['EnvPurpose']
+                key_store_name="{}-{}".format(system_id, env_purpose)
+                if event['RequestType'] == 'Create':
+                    cluster_id = event['cluster_id']
+                    state = KMS.describe_custom_key_stores(CustomKeyStoreName=key_store_name)['CustomKeyStores'][0]['ConnectionState']
+                    print('Connection status for key store: ' + key_store_name + ' : ' + state)
+                    return state
+                elif event['RequestType'] == 'Delete':
+                    cluster_id = event['PhysicalResourceId']
+                    state = KMS.describe_custom_key_stores(CustomKeyStoreName=key_store_name)['CustomKeyStores'][0]['ConnectionState']
+                    print('Connection status for key store: ' + key_store_name + ' : ' + state)
+                    return state
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: 20
+      Role: !GetAtt rLambdaExecutionRole.Arn
+
   rLambdaDeleteCluster:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-delete-cluster'  
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-delete-cluster'  
       Code:
         ZipFile: |
           import json
           import boto3
           HSM = boto3.client('cloudhsmv2')
           EC2 = boto3.client('ec2')
+          EC2_Resource = boto3.resource('ec2')
+
           def lambda_handler(event, context):
               print(event)
               cluster_id = event['PhysicalResourceId']
               hsm_sg = HSM.describe_clusters(Filters={"clusterIds": [cluster_id]})["Clusters"][0]["SecurityGroup"]
-              sg_rules = EC2.describe_security_group_rules(Filters=[{"Name": "group-id", "Values": [hsm_sg]}])["SecurityGroupRules"]
-              print('Removing SG rules ' + str(sg_rules))
-              EC2.revoke_security_group_egress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if i["IsEgress"]])
-              EC2.revoke_security_group_ingress(GroupId=hsm_sg, SecurityGroupRuleIds=[i["SecurityGroupRuleId"] for i in sg_rules if not i["IsEgress"]])
+
+              # Clean up dependent SG
+              sg_obj = EC2_Resource.SecurityGroup(hsm_sg)
+              print('Removing SG Ingress rules ' + str(sg_obj.ip_permissions))
+              sg_obj.revoke_ingress(IpPermissions=sg_obj.ip_permissions)
+              print('Removing SG Egress rules ' + str(sg_obj.ip_permissions_egress))
+              sg_obj.revoke_egress(IpPermissions=sg_obj.ip_permissions_egress)
+
               print('Deleting Cluster ' + str(cluster_id))
               HSM.delete_cluster(ClusterId=cluster_id)
-              sg = EC2.describe_security_groups(Filters=[{'Name': 'tag:hsm_cluster_id', 'Values': [cluster_id]}])['SecurityGroups']
-              if sg:
-                EC2.delete_security_group(GroupId=sg[0]['GroupId'])
+              #sg = EC2.describe_security_groups(Filters=[{'Name': 'tag:hsm_cluster_id', 'Values': [cluster_id]}])['SecurityGroups']
+              #if sg:
+              #  EC2.delete_security_group(GroupId=sg[0]['GroupId'])
               return {'Deleting': cluster_id}
       Handler: index.lambda_handler
       Runtime: python3.7
@@ -697,7 +859,7 @@ Resources:
   rLambdaDeleteHsms:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-delete-hsms' 
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-delete-hsms' 
       Code:
         ZipFile: |
           import json
@@ -723,7 +885,7 @@ Resources:
   rLambdaCfnError:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-send-cfn-error' 
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-send-cfn-error' 
       Code:
         ZipFile: |
           import json
@@ -740,7 +902,7 @@ Resources:
   rLambdaSendCfnResponse:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${pSystem}-send-cfn-response' 
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-send-cfn-response' 
       Code:
         ZipFile: |
           import json
@@ -791,11 +953,20 @@ Resources:
       Timeout: 20
       Role: !GetAtt rLambdaExecutionRole.Arn
 
-  rInitialHsmCryptoOfficerSecret:
+  rCustomerCaCertSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub '/${pSystem}/${rCloudHsmCluster.cluster_id}/customer-ca-cert'
+      Description: Dynamically generated customer CA cert
+      SecretString: 'placeholder'
+
+  rInitialHsmCryptoOfficerPasswordSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: !Sub '/${pSystem}/initial-co-password-${rCloudHsmCluster.cluster_id}'
-      Description: Stores the initial password for the Crypto Office (CO) user for CloudHSM
+      Name: !Sub '/${pSystem}/${rCloudHsmCluster.cluster_id}/initial-crypto-officer-password'
+      Description: Initial password for the Crypto Officer (CO) user for CloudHSM
       GenerateSecretString:
         SecretStringTemplate: '{"username": "admin"}'
         GenerateStringKey: "password"
@@ -804,8 +975,10 @@ Resources:
 
   rClientInstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      GroupName: !Sub '${pSystem}-client-${rCloudHsmCluster.cluster_id}'
+      GroupName: !Sub '${pSystem}-${pEnvPurpose}-client-${rCloudHsmCluster.cluster_id}'
       GroupDescription: Client Instance Security Group
       VpcId: !Ref pVpcId
       SecurityGroupEgress:
@@ -827,7 +1000,6 @@ Resources:
       Tags:
         - Key: hsm_cluster_id
           Value: !Sub '${rCloudHsmCluster.cluster_id}'
-    DeletionPolicy: Retain
 
   rClientInstance:
     Type: AWS::EC2::Instance
@@ -845,7 +1017,7 @@ Resources:
       ]
       Tags:
         - Key: Name
-          Value: !Sub '${pSystem}-client'
+          Value: !Sub '${pSystem}-${pEnvPurpose}-client'
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -x
@@ -859,11 +1031,8 @@ Resources:
               --configsets ${pStackScope} \
               --region ${AWS::Region}
 
-          CFN_INIT_EXIT_CODE=$?
-          echo CFN_INIT_EXIT_CODE: $CFN_INIT_EXIT_CODE
-
           /opt/aws/bin/cfn-signal \
-              --exit-code $CFN_INIT_EXIT_CODE \
+              --exit-code $? \
               --stack ${AWS::StackName} \
               --resource rClientInstance \
               --region ${AWS::Region}
@@ -873,7 +1042,7 @@ Resources:
           cluster-and-client-only:
             - 01-config-cloudwatch-agent
             - 02-install-dependencies
-            - 03-generate-cluster-cert
+            - 03-resolve-cluster-cert
             - 04-initialize-cluster
             - 05-config-security-group
             - 06-start-client-service
@@ -882,7 +1051,7 @@ Resources:
           with-custom-key-store:
             - 01-config-cloudwatch-agent
             - 02-install-dependencies
-            - 03-generate-cluster-cert
+            - 03-resolve-cluster-cert
             - 04-initialize-cluster
             - 05-config-security-group
             - 06-start-client-service
@@ -981,32 +1150,68 @@ Resources:
                 /usr/bin/wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-client-latest.el7.x86_64.rpm &&
                 /usr/bin/yum install -y ./cloudhsm-client-latest.el7.x86_64.rpm &&
                 /usr/bin/rm cloudhsm-client-latest.el7.x86_64.rpm
-        03-generate-cluster-cert:
+        03-resolve-cluster-cert:
           files:
-            /root/cloudhsm-work/generate-cluster-cert.sh:
+            /root/cloudhsm-work/resolve-cluster-cert.sh:
               content: !Sub |
                 #!/bin/bash
-                
+
                 CLUSTER_ID=${rCloudHsmCluster.cluster_id}
+                SYSTEM_ID=${pSystem}
+                BACKUP_ID=${pBackupId}
                 REGION=${AWS::Region}
 
-                /usr/bin/echo Creating Key
+                LOOKUP_CLUSTER_ID=$CLUSTER_ID
+                if [ "$BACKUP_ID" != "" ]; then
+                  /usr/bin/echo Backup ID specified. Obtaining original cluster ID based on backup ID.
+                  LOOKUP_CLUSTER_ID=$(/usr/local/bin/aws cloudhsmv2 describe-backups --filters backupIds=$BACKUP_ID --region $REGION  --output text --query 'Backups[].ClusterId')
+                fi
+              
+                /usr/bin/echo "Checking to see if customer CA certificate for cluster ID (${!LOOKUP_CLUSTER_ID}) is already available in Secrets Manager"
+                CA_CERT_LOOKUP=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id "/${!SYSTEM_ID}/${!LOOKUP_CLUSTER_ID}/customer-ca-cert" --region $REGION 2>&1)
+                if [ $? -eq 0 ] ; then
+                  CA_CERT=$(/usr/bin/echo $CA_CERT_LOOKUP | jq -r '.SecretString')
+                  /usr/bin/echo $CA_CERT
+ 
+                  if [ "$CA_CERT" != "placeholder" ] ; then
+                    /usr/bin/echo Customer CA certificate already available in Secrets Manager. Skipping creation of CA certificate
+                    /usr/bin/echo "$CA_CERT" > /opt/cloudhsm/etc/customerCA.crt
+
+                    if [ "$BACKUP_ID" != "" ]; then
+                      /usr/bin/echo Storing customer CA cert in context of new cluster ID
+                      /usr/local/bin/aws secretsmanager put-secret-value --secret-id "/${!SYSTEM_ID}/${!CLUSTER_ID}/customer-ca-cert" --secret-string "$CA_CERT" --region $REGION
+                    fi
+                    exit 0
+                  fi
+                else
+                  /usr/bin/echo "Return from attempting to lookup existing customer CA cert: ${!CA_CERT_LOOKUP}"
+                fi
+
+                echo "Customer CA cert doesn't already exist. Creating a new one."
+
+                /usr/bin/echo Creating customer key
                 /usr/bin/openssl genrsa -out customerCA.key 4096
 
-                /usr/bin/echo Creating CA
+                /usr/bin/echo Creating customer CA certificate
                 /usr/bin/openssl req -new -x509 -days 3652 -key customerCA.key -out customerCA.crt -subj "/C=IE/ST=${!REGION}/O=CloudHSM/OU=Amazon/CN=${!CLUSTER_ID}"
                 
                 /usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --output text --query 'Clusters[].Certificates.ClusterCsr' > ${!CLUSTER_ID}_ClusterCsr.csr  
+
+                /usr/bin/echo Signing cluster CSR
                 /usr/bin/openssl x509 -req -days 3652 -in ${!CLUSTER_ID}_ClusterCsr.csr -CA customerCA.crt -CAkey customerCA.key -CAcreateserial -out ${!CLUSTER_ID}_CustomerHsmCertificate.crt
                 
                 /usr/bin/cp customerCA.crt /opt/cloudhsm/etc/customerCA.crt
+
+                # Store customer CA cert in Secrets Manager
+                CA_CERT=`cat customerCA.crt`
+                /usr/local/bin/aws secretsmanager put-secret-value --secret-id "/${!SYSTEM_ID}/${!CLUSTER_ID}/customer-ca-cert" --secret-string "$CA_CERT" --region $REGION
               mode: '000700'
               owner: root
               group: root
           commands:
-            01-generate-cluster-cert:
+            01-resolve-cluster-cert:
               cwd: /root/cloudhsm-work
-              command: /root/cloudhsm-work/generate-cluster-cert.sh
+              command: /root/cloudhsm-work/resolve-cluster-cert.sh
         04-initialize-cluster:
           files:
             /root/cloudhsm-work/initialize-cluster.sh:
@@ -1015,12 +1220,20 @@ Resources:
 
                 CLUSTER_ID=${rCloudHsmCluster.cluster_id}
                 REGION=${AWS::Region}
+                
+                C_INIT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query 'Clusters[].State' --region $REGION --output text)
+                if [ "$C_INIT" == "ACTIVE" ]; then
+                  /usr/bin/echo Cluster is already active and therefore already initialized
+                  exit 0
+                fi
+
+                /usr/bin/echo Initializing cluster
 
                 /usr/local/bin/aws cloudhsmv2 initialize-cluster --cluster-id $CLUSTER_ID --signed-cert file://${!CLUSTER_ID}_CustomerHsmCertificate.crt --trust-anchor file://customerCA.crt --region $REGION
 
                 C_INIT=""
                 while [ "$C_INIT" != "INITIALIZED" ]; do
-                  /usr/bin/echo Waiting for Cluster to be initialized...
+                  /usr/bin/echo Waiting for cluster to be initialized...
                   C_INIT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query 'Clusters[].State' --region $REGION --output text)
                   /usr/bin/sleep 5
                 done
@@ -1032,7 +1245,7 @@ Resources:
           commands:
             01-initialize-cluster:
               cwd: /root/cloudhsm-work
-              command: /root/cloudhsm-work/initialize-cluster.sh > /root/cloudhsm-work/initialize-cluster.log 2>&1
+              command: /root/cloudhsm-work/initialize-cluster.sh
         05-config-security-group:
           files:
             /root/cloudhsm-work/config-security-group.sh:
@@ -1045,15 +1258,21 @@ Resources:
                 INSTANCE_ID=$(curl 169.254.169.254/latest/meta-data/instance-id/)
                 /usr/bin/echo $INSTANCE_ID
                 
-                INSTANCE_GROUP=$(/usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $REGION || /usr/bin/echo failed)
-                /usr/bin/echo "INSTANCE_GROUP: $INSTANCE_GROUP"
-                [[ $INSTANCE_GROUP == 'failed' ]] && exit 1
-                
-                SECURITY_GROUP=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query Clusters[*].SecurityGroup[] --output text --region $REGION || /usr/bin/echo failed)
-                /usr/bin/echo "SECURITY_GROUP: $SECURITY_GROUP"
-                [[ $security_group == 'failed' ]] && exit 1
+                INSTANCE_SEC_GROUP=$(/usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $REGION || /usr/bin/echo failed)
+                /usr/bin/echo "INSTANCE_SEC_GROUP: $INSTANCE_SEC_GROUP"
+                [[ $INSTANCE_SEC_GROUP == 'failed' ]] && exit 1
 
-                /usr/local/bin/aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP --source-group $INSTANCE_GROUP --protocol all --region $REGION
+                /usr/local/bin/aws ec2 describe-security-groups --group-ids $CLUSTER_SEC_GROUP --filters Name=ip-permission.group-id,Values="${!INSTANCE_SEC_GROUP}" | egrep "${!INSTANCE_SEC_GROUP}"
+                if [ $? -eq 0 ] ; then
+                  /usr/bin/echo EC2 client instance security group already present in cluster security group
+                  exit 0
+                fi
+                
+                CLUSTER_SEC_GROUP=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query Clusters[*].SecurityGroup[] --output text --region $REGION || /usr/bin/echo failed)
+                /usr/bin/echo "CLUSTER_SEC_GROUP: $CLUSTER_SEC_GROUP"
+                [[ $CLUSTER_SEC_GROUP == 'failed' ]] && exit 1
+
+                /usr/local/bin/aws ec2 authorize-security-group-ingress --group-id $CLUSTER_SEC_GROUP --source-group $INSTANCE_SEC_GROUP --protocol all --region $REGION
               mode: '000700'
               owner: root
               group: root
@@ -1110,9 +1329,15 @@ Resources:
               content: !Sub |
                 #!/bin/bash
 
-                INITIAL_CRYPTO_OFFICER_SECRET=${rInitialHsmCryptoOfficerSecret}
+                INITIAL_CRYPTO_OFFICER_SECRET=${rInitialHsmCryptoOfficerPasswordSecret}
                 CLUSTER_ID=${rCloudHsmCluster.cluster_id}
                 REGION=${AWS::Region}
+
+                C_ACTIVE=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query 'Clusters[].State' --region $REGION --output text)
+                if [ "$C_ACTIVE" == "ACTIVE" ]; then
+                  /usr/bin/echo Cluster is already active
+                  exit 0
+                fi
 
                 CHECK_PASSWORD=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id $INITIAL_CRYPTO_OFFICER_SECRET --region $REGION 2>&1)
                 [[ $(/usr/bin/echo $CHECK_PASSWORD | awk '{print match($0,"error")}') -gt 0 ]] && /usr/bin/echo "Failed to retrieve password from secrets manager" && exit 1
@@ -1120,10 +1345,10 @@ Resources:
 
                 { time ./set-crypto-officer-password.expect $INITIAL_PASSWORD; } 2> set-crypto-officer-password-time.txt 1> /dev/null
 
-                C_INIT=""
-                while [ "$C_INIT" != "ACTIVE" ]; do
-                  /usr/bin/echo Waiting for Cluster to be ACTIVE...
-                  C_INIT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query 'Clusters[].State' --region $REGION --output text)
+                C_ACTIVE=""
+                while [ "$C_ACTIVE" != "ACTIVE" ]; do
+                  /usr/bin/echo Waiting for Cluster to be activated...
+                  C_ACTIVE=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query 'Clusters[].State' --region $REGION --output text)
                   /usr/bin/sleep 5
                 done
               mode: '000700'
@@ -1223,10 +1448,19 @@ Resources:
               content: !Sub |
                 #!/bin/bash
 
-                INITIAL_CRYPTO_OFFICER_SECRET=${rInitialHsmCryptoOfficerSecret}
-                SYSTEM=${pSystem}
+                INITIAL_CRYPTO_OFFICER_SECRET=${rInitialHsmCryptoOfficerPasswordSecret}
+                QUALIFIER=${pSystem}-${pEnvPurpose}
+                KEY_STORE_NAME="${!QUALIFIER}"
                 CLUSTER_ID=${rCloudHsmCluster.cluster_id}
                 REGION=${AWS::Region}
+
+                /usr/bin/echo Checking to see if key store already exists
+                /usr/local/bin/aws kms describe-custom-key-stores --custom-key-store-name $KEY_STORE_NAME --region $REGION
+                if [ $? -eq 0 ] ; then
+                  /usr/bin/echo Key store already exists
+                  exit 0
+                fi
+                /usr/bin/echo Key store does not exist
 
                 CHECK_PASSWORD=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id $INITIAL_CRYPTO_OFFICER_SECRET --region $REGION 2>&1)
                 [[ $(/usr/bin/echo $CHECK_PASSWORD | awk '{print match($0,"error")}') -gt 0 ]] && /usr/bin/echo "Failed to retrieve password from secrets manager" && exit 1
@@ -1234,24 +1468,31 @@ Resources:
               
                 { time ./create-kmsuser.expect $INITIAL_PASSWORD; } 2> create-kmsuser-time.txt 1> /dev/null
 
-                CUSTOM_KEY_STORE_ID=$(/usr/local/bin/aws kms create-custom-key-store --custom-key-store-name ${!SYSTEM}-${!CLUSTER_ID} --cloud-hsm-cluster-id $CLUSTER_ID --key-store-password $INITIAL_PASSWORD --trust-anchor-certificate file://customerCA.crt --region $REGION | jq -r '.CustomKeyStoreId' || /usr/bin/echo failed)
-                /usr/bin/echo "CUSTOM_KEY_STORE_ID: $CUSTOM_KEY_STORE_ID"
-                [[ $CUSTOM_KEY_STORE_ID == 'failed' ]] && exit 1
+                /usr/bin/echo Creating key store
+                KEY_STORE_RESULT=$(/usr/local/bin/aws kms create-custom-key-store --custom-key-store-name $KEY_STORE_NAME --cloud-hsm-cluster-id $CLUSTER_ID --key-store-password $INITIAL_PASSWORD --trust-anchor-certificate file://customerCA.crt --region $REGION)
+                if [ $? -ne 0 ] ; then
+                  /usr/bin/echo Creation of key store failed
+                  exit 1
+                fi
+                /usr/bin/echo Creation of key store succeeded
+                KEY_STORE_ID=$(/usr/bin/echo $KEY_STORE_RESULT | jq -r '.CustomKeyStoreId')
+                /usr/bin/echo "KEY_STORE_ID: $KEY_STORE_ID"
               
                 n=0
                 while true
                 do
-                  /usr/local/bin/aws kms connect-custom-key-store --custom-key-store-id $CUSTOM_KEY_STORE_ID --region $REGION && /usr/bin/echo "Succeeded in aws kms connect-custom-key-store" && break
+                  /usr/local/bin/aws kms connect-custom-key-store --custom-key-store-id $KEY_STORE_ID --region $REGION && /usr/bin/echo "Succeeded in aws kms connect-custom-key-store" && break
                   [[ $n -ge 5 ]] && exit 1
                   n=$((n+1))
                   /usr/bin/echo "Retrying in $((n*5)) for aws kms connect-custom-key-store"
                   /usr/bin/sleep $((n*5))
                 done
 
-                while [[ -z $(/usr/local/bin/aws kms describe-custom-key-stores --custom-key-store-id $CUSTOM_KEY_STORE_ID --region $REGION | egrep '\bCONNECTED\b') ]];do
-                  /usr/bin/echo "Waiting for KMS to connect to CloudHSM..."
+                while [[ -z $(/usr/local/bin/aws kms describe-custom-key-stores --custom-key-store-id $KEY_STORE_ID --region $REGION | egrep '\bCONNECTED\b') ]];do
+                  /usr/bin/echo "Waiting for key store to connect to CloudHSM cluster..."
                   /usr/bin/sleep 30
                 done
+                /usr/bin/echo Key store connected
               mode: '000700'
               owner: root
               group: root
@@ -1263,7 +1504,7 @@ Resources:
   rClientInstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${pSystem}-client-svc-ec2'
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-client-svc-ec2'
       MaxSessionDuration: 7200
       AssumeRolePolicyDocument:
         Version: 2012-10-17
@@ -1279,7 +1520,7 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
       Policies:
-        - PolicyName: CloudHSMAccess
+        - PolicyName: CloudHsmAccess
           PolicyDocument:
             Version: 2012-10-17
             Statement:
@@ -1315,6 +1556,10 @@ Resources:
                   'ForAllValues:StringEquals':
                     'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
                     'aws:RequestedRegion': !Sub '${AWS::Region}'
+        - PolicyName: KmsAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement: 
               - Effect: Allow
                 Action:
                   - kms:CreateCustomKeyStore
@@ -1323,18 +1568,46 @@ Resources:
                   - kms:UpdateCustomKeyStore
                   - kms:DisconnectCustomKeyStore
                   - kms:Decrypt
-                  - iam:CreateServiceLinkedRole
-                  - secretsmanager:ListSecrets
                 Resource: '*'
                 Condition:
                   'ForAllValues:StringEquals':
                     'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
                     'aws:RequestedRegion': !Sub '${AWS::Region}'
+        - PolicyName: IamAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:                
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+        #
+        # Read only access cannot be constrained to only the secrets created as part of this stack. To support
+        # the ability to create a CloudHSM cluster from a backup, the first boot scripts will attempt to
+        # look up the customer CA cert from cluster associated with the backup. The secret containing the cert 
+        # of the previous cluster would have been created as part of a different stack.
+        #
+        - PolicyName: SecretsAccessReadOnly
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
               - Effect: Allow
                 Action:
                   - secretsmanager:DescribeSecret
                   - secretsmanager:GetSecretValue
-                Resource: !Ref rInitialHsmCryptoOfficerSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/cluster-*'
+        - PolicyName: SecretsAccessWrite
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:PutSecretValue
+                Resource: !Ref rCustomerCaCertSecret
 
   rClientInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -1346,7 +1619,7 @@ Resources:
   rCloudWatchLogsAgentGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '${pSystem}'
+      LogGroupName: !Sub '/${pSystem}/${pEnvPurpose}'
       RetentionInDays: 30
 
 Outputs:

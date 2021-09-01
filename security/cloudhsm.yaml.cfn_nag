@@ -41,14 +41,6 @@ cloudhsm.yaml
 [33m| Resource found with an explicit name, this disallows updates that require replacement of this resource[0m
  Notes: The CF template has been tested and this may change in the future. This has been reviewed and deemed an acceptable risk.
 ------------------------------------------------------------
-[33m| WARN W76[0m
-[33m|[0m
-[33m| Resources: ["rClientInstanceRole"][0m
-[33m| Line Numbers: [1264][0m
-[33m|[0m
-[33m| SPCM for IAM policy document is higher than 25[0m
- Notes: The addition of a condition within the IAM policy has pushed the SPCM score above the threshold. However this is necessary to scope the permissions to the account and region that it is deployed in.
-------------------------------------------------------------
 [33m| WARN W77[0m
 [33m|[0m
 [33m| Resources: ["rInitialHsmCryptoOfficerSecret"][0m
