@@ -169,7 +169,7 @@ You have several options for monitoring the progress of EC2 client instance conf
 
 **CloudWatch Logs**
 
-Access the CloudWatch console and select the `cloudhsm` log group. The name of the log group is based on the value of the `pSystem` CloudFormation template parameter.
+Access the CloudWatch console and select the log group of interest. The name of the log group is based on the value of the `pSystem` and `pEnvPurpose` CloudFormation template parameters. For example, `/cloudhsm/1`
 
 In the proper log group, select the `cfn-init.log` log stream to monitor the progress of the first boot automation.  Review the content of the [`AWS::CloudFormation::Init`](cloudhsm.yaml) section in the CloudFormation template for the sequence of scripts that are executed.
 
