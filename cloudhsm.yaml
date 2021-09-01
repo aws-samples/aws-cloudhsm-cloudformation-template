@@ -837,7 +837,6 @@ Resources:
               print(event)
               cluster_id = event['PhysicalResourceId']
               hsm_sg = HSM.describe_clusters(Filters={"clusterIds": [cluster_id]})["Clusters"][0]["SecurityGroup"]
-
               # Clean up dependent SG
               sg_obj = EC2_Resource.SecurityGroup(hsm_sg)
               print('Removing SG Ingress rules ' + str(sg_obj.ip_permissions))
@@ -851,6 +850,7 @@ Resources:
               #if sg:
               #  EC2.delete_security_group(GroupId=sg[0]['GroupId'])
               return {'Deleting': cluster_id}
+
       Handler: index.lambda_handler
       Runtime: python3.7
       Timeout: 20
