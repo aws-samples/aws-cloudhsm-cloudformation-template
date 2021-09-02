@@ -129,6 +129,7 @@ Resources:
       Backup_Id: !Ref pBackupId
       SystemId: !Ref pSystem
       EnvPurpose: !Ref pEnvPurpose
+      StackScope: !Ref pStackScope
       CreateSFN_function: !Ref rStateMachineCreateCluster
       DeleteSFN_function: !Ref rStateMachineDeleteCluster
 
@@ -273,8 +274,17 @@ Resources:
       DefinitionString: !Sub |-
         {
           "Comment": "Disconnects KMS Custom KMS key store and deletes CloudHSM cluster as provided by PhysicalResourceId",
-          "StartAt": "DisconnectKMS",
+          "StartAt": "StackScope",
           "States": {
+            "StackScope": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.ResourceProperties.StackScope",
+                "StringEquals": "cluster-and-client-only",
+                "Next": "GetClusterInfo"
+              }],
+              "Default": "DisconnectKMS"
+            },
             "DisconnectKMS": {
               "Type": "Task",
               "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDisconnectKms}",
@@ -846,9 +856,9 @@ Resources:
 
               print('Deleting Cluster ' + str(cluster_id))
               HSM.delete_cluster(ClusterId=cluster_id)
-              #sg = EC2.describe_security_groups(Filters=[{'Name': 'tag:hsm_cluster_id', 'Values': [cluster_id]}])['SecurityGroups']
-              #if sg:
-              #  EC2.delete_security_group(GroupId=sg[0]['GroupId'])
+              sg = EC2.describe_security_groups(Filters=[{'Name': 'tag:hsm_cluster_id', 'Values': [cluster_id]}])['SecurityGroups']
+              if sg:
+                EC2.delete_security_group(GroupId=sg[0]['GroupId'])
               return {'Deleting': cluster_id}
 
       Handler: index.lambda_handler
