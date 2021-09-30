@@ -11,6 +11,18 @@ The following tools run against each CloudFormation template without failures. W
 * `cfn-lint` 
 * `cfn_guard` 
 
+## Prerequisites
+
+**Delete Service Linked Roles**
+
+Before each test, ensure that the following service linked roles have been deleted from the AWS account:
+* `AWSServiceRoleForCloudHSM`
+* `AWSServiceRoleForKeyManagementServiceCustomKeyStores`
+
+**Plan to Test in Multiple Regions**
+
+Ensure that you test the template in multple AWS Regions including `us-east-1` and at least one other Region.
+
 ## CloudHSM Cluster Only
 
 In all of these test cases, select the CloudHSM only deployment scope.

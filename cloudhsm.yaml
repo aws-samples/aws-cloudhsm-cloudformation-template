@@ -154,7 +154,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - lambda:InvokeFunction
-                Resource: '*'
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${pSystem}-${pEnvPurpose}-*'
 
   rStateMachineCreateCluster:
     Type: AWS::StepFunctions::StateMachine
@@ -464,7 +464,7 @@ Resources:
                   - states:ListExecutions
                   - states:UpdateStateMachine
                 Resource:
-                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*'
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${pSystem}-${pEnvPurpose}-*'
               - Effect: Allow
                 Action:
                   - cloudhsm:CreateCluster
@@ -480,8 +480,7 @@ Resources:
                   - cloudhsm:ListTags
                   - cloudhsm:TagResource
                   - cloudhsm:UntagResource
-                Resource:
-                  - '*'
+                Resource: '*'
                 Condition:
                   'ForAllValues:StringEquals':
                     'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
@@ -494,13 +493,20 @@ Resources:
                   - kms:DescribeCustomKeyStores
                   - kms:UpdateCustomKeyStore
                   - kms:DisconnectCustomKeyStore
-                  - kms:UpdateCustomKeyStore
                   - kms:Decrypt
                 Resource: '*'
                 Condition:
                   'ForAllValues:StringEquals':
                     'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
                     'aws:RequestedRegion': !Sub '${AWS::Region}'
+              # See example: https://docs.aws.amazon.com/IAM/latest/UserGuide/using-service-linked-roles.html#service-linked-role-permissions
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: 'arn:aws:iam::*:role/aws-service-role/cloudhsm.amazonaws.com/AWSServiceRoleForCloudHSM'
+                Condition:
+                  'StringLike':
+                    'iam:AWSServiceName': 'cloudhsm.amazonaws.com'
   
   rCustomResourceCloudHsmCluster:
     Type: AWS::Lambda::Function
@@ -992,11 +998,6 @@ Resources:
       GroupDescription: Client Instance Security Group
       VpcId: !Ref pVpcId
       SecurityGroupEgress:
-        - CidrIp: 0.0.0.0/0
-          IpProtocol: tcp
-          Description: HTTP outbound
-          FromPort: 80
-          ToPort: 80
         - CidrIp: 0.0.0.0/0
           IpProtocol: tcp
           Description: HTTPS outbound
@@ -1583,18 +1584,14 @@ Resources:
                   'ForAllValues:StringEquals':
                     'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
                     'aws:RequestedRegion': !Sub '${AWS::Region}'
-        - PolicyName: IamAccess
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:                
+              # See example: https://docs.aws.amazon.com/IAM/latest/UserGuide/using-service-linked-roles.html#service-linked-role-permissions
               - Effect: Allow
                 Action:
                   - iam:CreateServiceLinkedRole
-                Resource: '*'
+                Resource: 'arn:aws:iam::*:role/aws-service-role/cks.kms.amazonaws.com/AWSServiceRoleForKeyManagementServiceCustomKeyStores'
                 Condition:
-                  'ForAllValues:StringEquals':
-                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
-                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+                  'StringLike':
+                    'iam:AWSServiceName': 'cks.kms.amazonaws.com'
         #
         # Read only access cannot be constrained to only the secrets created as part of this stack. To support
         # the ability to create a CloudHSM cluster from a backup, the first boot scripts will attempt to
