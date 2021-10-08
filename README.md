@@ -283,7 +283,7 @@ If you requested creation of a KMS custom key store, KMS has already changed the
 
 The CloudFormation template currently supports a limited number of template parameters that can be applied via CloudFormation stack updates.  See [CloudFormation Template Parameters](#cloudformation-template-parameters) for the stack parameters that can be updated.
 
-You should also be able to modify most of the resources contained in the CloudFormation template and be able to apply those modification via stack updates.
+You should also be able to modify most of the resources contained in the CloudFormation template and apply those modifications via stack updates.
 
 ## Monitoring and Managing the Resources
 
