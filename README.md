@@ -9,6 +9,7 @@ This AWS CloudFormation template automatically deploys an [AWS CloudHSM](https:/
 * [Creating CloudFormation Stack](#creating-cloudformation-stack)
 * [Troubleshooting Stack Creation](#troubleshooting-stack-creation)
 * [Performing Post Stack Creation Steps](#performing-post-stack-creation-steps)
+* [Updating the Stack](#updating-the-stack)
 * [Monitoring and Managing the Resources](#monitoring-and-managing-the-resources)
 * [Notifying of Potential Security Issues](#notifying-of-potential-security-issues)
 * [Contributing](#contributing)
@@ -30,6 +31,12 @@ In addition to a CloudHSM cluster and HSM resources, the following resources are
 * An initial crypto officer `admin` user password that is stored as a secret in AWS Secrets Manager
 
 ## Usage
+
+### Reviewing the opinionated approach
+
+This CloudFormation template takes an opinionated approach to deploying and initializing a CloudHSM cluster. Since this approach might not be aligned with your organization's requirements, you should review the approach before deploying and initializing CloudHSM clusters in your formal environments.
+
+For example, this template results in an initial crypto officer password being automatically assigned. You're expected to change the crypto officer's password immediately after initialization of the cluster.
 
 ### Preparing to create a CloudHSM cluster
 
@@ -107,19 +114,19 @@ Use the [`cloudhsm.yaml`](cloudhsm.yaml) CloudFormation template to create a new
 
 #### CloudFormation Template Parameters
 
-|Parameter|Required|Description|Default|
-|---------|--------|-----------|-------|
-|`pSystem`|Optional|Used as a prefix in the names of many of the newly created cloud resources. You normally do not need to override the default value.|`cloudhsm`|
-|`pEnvPurpose`|Optional|Identifies the purpose for this particular instance of the stack. Used as part of the prefix in the names of many of the newly created resources. Enables you to create and more easily distinguish resources of multiple stacks in the same AWS account. For example, `1`, `2`, `test1`, `test2`, etc.|`1`|
-|`pStackScope`|Optional|Scope of the stack to create:<br>`with-custom-key-store`: CloudHSM cluster + EC2 client instance + KMS custom key store<br>`cluster-and-client-only`: CloudHSM cluster + EC2 client instance|`with-custom-key-store`|
-|`pVpcId`|Optional|The VPC in which the HSM Elastic Network Interfaces (ENIs) will be provisioned and in which the EC2 client instance will be deployed.|None|
-|`pNumHsms`|Optional|Number of HSMs to create in the CloudHSM cluster: `1`, `2`, or `3`. When using a KMS custom key store, a minimum of 2 HSMs is required.|`2`|
-|`pBackupRetentionDays`|Optional|Number of days to retain CloudHSM cluster backups. You may specify from `7` to `379` days.|`90`|
-|`pBackupId`|Optional|ID of CloudHSM backup if you want create the cluster from a backup|None|
-|`pClientInstanceSubnet`|Required|The subnet in which the EC2 client will be deployed|None|
-|`pClientInstanceType`|Optional|Instance type to use for the EC2 client|`t3a.small`|
-|`pClientInstanceAmiSsmParameter`|Optional|SSM parameter name for EC2 AMI to use for the EC2 client.|`/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs`|
-|`pClientInstanceAmiId`|Optional|ID of EC2 AMI to use for the EC2 client.<br><br>Overrides `pClientInstanceAmiSsmParameter` when present.<br><br>If you desire to have direct control over the AMI in use, specify this parameter.|None|
+|Parameter|Required|Description|Default|Supported in Stack Updates?|
+|---------|--------|-----------|-------|---------------------------|
+|`pSystem`|Optional|Used as a prefix in the names of many of the newly created cloud resources. You normally do not need to override the default value.|`cloudhsm`|No|
+|`pEnvPurpose`|Optional|Identifies the purpose for this particular instance of the stack. Used as part of the prefix in the names of many of the newly created resources. Enables you to create and more easily distinguish resources of multiple stacks in the same AWS account. For example, `1`, `2`, `test1`, `test2`, etc.|`1`|No|
+|`pStackScope`|Optional|Scope of the stack to create:<br>`with-custom-key-store`: CloudHSM cluster + EC2 client instance + KMS custom key store<br>`cluster-and-client-only`: CloudHSM cluster + EC2 client instance|`with-custom-key-store`|No|
+|`pVpcId`|Optional|The VPC in which the HSM Elastic Network Interfaces (ENIs) will be provisioned and in which the EC2 client instance will be deployed.|None|No|
+|`pNumHsms`|Optional|Number of HSMs to create in the CloudHSM cluster: `1`, `2`, or `3`. When using a KMS custom key store, a minimum of 2 HSMs is required.|`2`|No|
+|`pBackupRetentionDays`|Optional|Number of days to retain CloudHSM cluster backups. You may specify from `7` to `379` days.|`90`|No|
+|`pBackupId`|Optional|ID of CloudHSM backup if you want create the cluster from a backup|None|No|
+|`pClientInstanceSubnet`|Required|The subnet in which the EC2 client will be deployed|None|No|
+|`pClientInstanceType`|Optional|Instance type to use for the EC2 client|`t3a.small`|Yes|
+|`pClientInstanceAmiSsmParameter`|Optional|SSM parameter name for EC2 AMI to use for the EC2 client.|`/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs`|No|
+|`pClientInstanceAmiId`|Optional|ID of EC2 AMI to use for the EC2 client.<br><br>Overrides `pClientInstanceAmiSsmParameter` when present.<br><br>If you desire to have direct control over the AMI in use, specify this parameter.|None|Yes|
 
 ### 2. Monitor progress of stack creation
 
@@ -271,6 +278,12 @@ You should store the new password in your standard enterprise password vault.
 At this stage, you can optionally delete the secret from Secrets Manager given that the initial password is no longer needed for operation of the cluster.
 
 If you requested creation of a KMS custom key store, KMS has already changed the initial password for the `kmsuser` across the HSMs.
+
+## Updating the Stack
+
+The CloudFormation template currently supports a limited number of template parameters that can be applied via CloudFormation stack updates.  See [CloudFormation Template Parameters](#cloudformation-template-parameters) for the stack parameters that can be updated.
+
+You should also be able to modify most of the resources contained in the CloudFormation template and be able to apply those modification via stack updates.
 
 ## Monitoring and Managing the Resources
 
