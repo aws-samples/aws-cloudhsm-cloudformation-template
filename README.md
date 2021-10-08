@@ -19,7 +19,7 @@ This AWS CloudFormation template automatically deploys an [AWS CloudHSM](https:/
 
 The [`cloudhsm.yaml`](cloudhsm.yaml) CloudFormation template creates a CloudHSM cluster with HSMs and optionally creates a KMS custom key store and connects it to the cluster. 
 
-<img src="images/cloudhsm-cluster.png" alt="CloudHSM Cluster" width="600"/>
+<img src="images/cloudhsm-cluster.png" alt="CloudHSM Cluster" width="800"/>
 
 In addition to a CloudHSM cluster and HSM resources, the following resources are created in support of the cluster:
 
