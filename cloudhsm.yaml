@@ -525,7 +525,7 @@ Resources:
               CreatestepArn = event['ResourceProperties']['CreateSFN_function']
               DeletestepArn = event['ResourceProperties']['DeleteSFN_function']
               print('ResponseURL is ' + str(event['ResponseURL']))
-              if (os.environ['AWS_REGION'] == 'ap-northeast-3') or (os.environ['AWS_REGION'] == 'sa-east-1'):
+              if (os.environ['AWS_REGION'] == 'cn-north-1') or (os.environ['AWS_REGION'] == 'cn-northwest-1'):
                   responseStatus = 'FAILED'
                   responseData = {'Failed': 'Unsupported Region.'}
                   time.sleep(3)
