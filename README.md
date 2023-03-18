@@ -241,7 +241,7 @@ Use AWS Systems Manager Session Manager to access a terminal session to the EC2 
 
 Once you're in the terminal session:
 
-1. Execute `$ sudo /opt/cloudhsm/bin/cloudhsm-cli interactive`
+1. Execute `$ /opt/cloudhsm/bin/cloudhsm-cli interactive`
 2. A subset of the [commands](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cloudhsm_cli-reference.html) can be executed before logging in. For example:
   * `user list` - Lists the set of users.
 
@@ -287,7 +287,7 @@ Use AWS Systems Manager Session Manager to access a terminal session to the EC2 
 Once you're in the terminal session:
 
 1. Obtain the initial crypto officer (CO) password from Secrets Manager
-2. Execute `$ sudo /opt/cloudhsm/bin/cloudhsm-cli interactive`
+2. Execute `$ /opt/cloudhsm/bin/cloudhsm-cli interactive`
 3. At the `aws-cloudhsm >` prompt, log in via the CO user:  `login --username admin --role admin`
 4. Enter the initial password for the CO user that you obtained from Secrets Manager
 5. You should see a successful login
