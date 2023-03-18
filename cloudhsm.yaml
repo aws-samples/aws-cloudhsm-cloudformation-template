@@ -68,7 +68,7 @@ Parameters:
   pStackScope:
     Description:  "Scope of the stack to create: 'with-custom-key-store': CloudHSM cluster + EC2 client instance + KMS custom key store; 'cluster-and-client-only': CloudHSM cluster + EC2 client instance"
     Type: String
-    Default: with-custom-key-store
+    Default: cluster-and-client-only
     AllowedValues:
       - with-custom-key-store
       - cluster-and-client-only
@@ -109,7 +109,7 @@ Parameters:
 
   pClientInstanceAmiSsmParameter:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Description: SSM paramater name for EC2 Amazon Machine Image (AMI) for the client instance
+    Description: SSM parameter name for EC2 Amazon Machine Image (AMI) for the client instance
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs
 
   pClientInstanceAmiId:
@@ -1397,7 +1397,7 @@ Resources:
 
                   export HSM_ID=$(/usr/local/bin/aws cloudhsmv2 create-hsm --cluster-id $CLUSTER_ID --availability-zone $AVAILABLE_AZ --region $REGION | jq ' .Hsm.HsmId ' |  jq -r '.')
                   [[ $HSM_ID == '' ]] && exit 1
-                  /usr/bin/echo "ID of new HSM: ${!HSM_ID}"
+                  /usr/bin/echo "ID of new HSM: $HSM_ID"
 
                   # Wait for new HSM to be listed before checking its state
                   NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length)
@@ -1413,6 +1413,14 @@ Resources:
                     /usr/bin/echo "Waiting for HSM to become active..."
                     /usr/bin/sleep 5
                   done
+
+                  export HSM_IP_ADDR=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq '.[] | select(.HsmId==env.HSM_ID) | .EniIp' | jq -r '.' )
+                  [[ $HSM_IP_ADDR == '' ]] && exit 1
+                  /usr/bin/echo "HSM IP address: $HSM_IP_ADDR"
+                  
+                  # Workaround until "/opt/cloudhsm/bin/configure-cli -a <IP address>" might start supporting appending of entries
+                  /usr/bin/cp /opt/cloudhsm/etc/cloudhsm-cli.cfg /opt/cloudhsm/etc/cloudhsm-cli.cfg.bak 
+                  /usr/bin/jq '.clusters[0].cluster.servers += [{ "hostname": env.HSM_IP_ADDR, "port": 2223,"enable": true }]' /opt/cloudhsm/etc/cloudhsm-cli.cfg > tmp.$$.cfg && /usr/bin/mv tmp.$$.cfg /opt/cloudhsm/etc/cloudhsm-cli.cfg
 
                   HSM_INDEX=$((HSM_INDEX+1))
                 done

@@ -77,11 +77,13 @@ You'll need to determine the VPC and subnet in which an EC2 client instance that
 
 #### 6. Determine whether or not you want to create a KMS custom key store
 
-By default, the template creates a KMS custom key store and connects it to the CloudHSM cluster. If you don't plan on using KMS with your CloudHSM cluster, you can override the [`pStackScope`](#cloudformation-template-parameters) CloudFormation template parameter to specify that only the CloudHSM cluster be created.
+By default, the template creates a CloudHSM cluster with the specified number of HSMs and an EC2 client to help you manage the cluster.
+
+If you plan on using KMS with your CloudHSM cluster, you can override the [`pStackScope`](#cloudformation-template-parameters) CloudFormation template parameter to specify that a KMS custom key store should be created. As a result, the custom key store will be connected to the CloudHSM cluster.
 
 ## Managing Security
 
-A security review has been performed on the CloudFormation templates contained in this repository. This solution assumes that CloudHSM clusters KMS custom key store will be deployed and managed in the following manner:
+A security review has been performed on the CloudFormation templates contained in this repository. This solution assumes that CloudHSM cluster will be deployed and managed in the following manner:
 - You specify a private subnet that does not support publicly addressable IP addresses to be used for the EC2 client instance
 - You stop (not terminate) the EC2 client instance once management has been completed so that it is normally in the `stopped` state
 - You power on the EC2 client instance to the `running` state when you need to manage the CloudHSM cluster via the EC2 client instance
@@ -102,7 +104,7 @@ The CloudFormation templates `cloudhsm.yaml` and `vpc.yaml` has been scanned by 
 
 CloudHSM stack update operations do not generally support modification of stack parameters except for the AMI ID if an AMI ID was originally used to create the stack.
 
-Updating other parameters, for example, the number of HSMs, is not supported via CloudHSM stack updates.
+Updating other parameters, for example, the number of HSMs, is not yet supported via CloudHSM stack updates.
 
 ## Creating CloudFormation Stack
 
@@ -118,7 +120,7 @@ Use the [`cloudhsm.yaml`](cloudhsm.yaml) CloudFormation template to create a new
 |---------|--------|-----------|-------|---------------------------|
 |`pSystem`|Optional|Used as a prefix in the names of many of the newly created cloud resources. You normally do not need to override the default value.|`cloudhsm`|No|
 |`pEnvPurpose`|Optional|Identifies the purpose for this particular instance of the stack. Used as part of the prefix in the names of many of the newly created resources. Enables you to create and more easily distinguish resources of multiple stacks in the same AWS account. For example, `1`, `2`, `test1`, `test2`, etc.|`1`|No|
-|`pStackScope`|Optional|Scope of the stack to create:<br>`with-custom-key-store`: CloudHSM cluster + EC2 client instance + KMS custom key store<br>`cluster-and-client-only`: CloudHSM cluster + EC2 client instance|`with-custom-key-store`|No|
+|`pStackScope`|Optional|Scope of the stack to create:<br>`with-custom-key-store`: CloudHSM cluster + EC2 client instance + KMS custom key store<br>`cluster-and-client-only`: CloudHSM cluster + EC2 client instance|`cluster-and-client-only`|No|
 |`pVpcId`|Optional|The VPC in which the HSM Elastic Network Interfaces (ENIs) will be provisioned and in which the EC2 client instance will be deployed.|None|No|
 |`pNumHsms`|Optional|Number of HSMs to create in the CloudHSM cluster: `1`, `2`, or `3`. When using a KMS custom key store, a minimum of 2 HSMs is required.|`2`|No|
 |`pBackupRetentionDays`|Optional|Number of days to retain CloudHSM cluster backups. You may specify from `7` to `379` days.|`90`|No|
@@ -231,7 +233,7 @@ Access the EC2 console and select Network Interfaces to inspect the ENIs that we
 
 #### Inspect CloudHSM via the CloudHSM SDK
 
-##### CloudHSM SDK v5: Using CloudHSM CLI
+**CloudHSM SDK v5: Using CloudHSM CLI**
 
 By default, the EC2 client instance has been configured with with the CloudHSM SDK v5 that includes the [CloudHSM Client CLI](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cloudhsm_cli.html).
 
@@ -243,7 +245,7 @@ Once you're in the terminal session:
 2. A subset of the [commands](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cloudhsm_cli-reference.html) can be executed before logging in. For example:
   * `user list` - Lists the set of users.
 
-##### CloudHSM SDK v3: Using the CloudHSM Management Utility (CMU)
+**CloudHSM SDK v3: Using the CloudHSM Management Utility (CMU)**
 
 If you opted to install v3 of the CloudHSM SDK, then the EC2 client instance has been configured with the [CloudHSM Management Utility (CMU)](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cloudhsm_mgmt_util.html) to support ongoing inspection and configuration of your cluster.  You can use the `cloudhsm_mgmt_util` CLI to execute the CMU.
 
@@ -276,7 +278,7 @@ After you've reviewed the cause of the error, you can proceed with deleting the 
 
 As a security best practice, you should change the Crypto Officer (CO) password immediately after the stack is created. 
 
-##### CloudHSM SDK v5: Using CloudHSM CLI
+**CloudHSM SDK v5: Using CloudHSM CLI**
 
 By default, the EC2 client instance has been configured with the CloudHSM SDK v5 that includes the [CloudHSM Client CLI](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cloudhsm_cli.html).
 
@@ -299,7 +301,7 @@ At this stage, you can optionally delete the secret from Secrets Manager given t
 
 If you requested creation of a KMS custom key store, KMS has already changed the initial password for the `kmsuser` across the HSMs.
 
-##### CloudHSM SDK v3: Using the CloudHSM Management Utility (CMU)
+**CloudHSM SDK v3: Using the CloudHSM Management Utility (CMU)**
 
 If you opted to install v3 of the CloudHSM SDK, then the EC2 client instance has been configured with CloudHSM SDK v3 that includes the [CloudHSM Management Utility (CMU)](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cloudhsm_mgmt_util.html) to support ongoing inspection and configuration of your cluster.  You can use the `cloudhsm_mgmt_util` CLI to execute the CMU.
 
