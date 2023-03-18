@@ -1269,9 +1269,9 @@ Resources:
                 INSTANCE_ID=$(curl 169.254.169.254/latest/meta-data/instance-id/)
                 /usr/bin/echo $INSTANCE_ID
                 
-                INSTANCE_SEC_GROUP=$(/usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $REGION || /usr/bin/echo failed)
+                INSTANCE_SEC_GROUP=$(/usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $REGION)
                 /usr/bin/echo "INSTANCE_SEC_GROUP: $INSTANCE_SEC_GROUP"
-                [[ $INSTANCE_SEC_GROUP == 'failed' ]] && exit 1
+                [[ $INSTANCE_SEC_GROUP == '' ]] && exit 1
 
                 /usr/local/bin/aws ec2 describe-security-groups --group-ids $CLUSTER_SEC_GROUP --filters Name=ip-permission.group-id,Values="${!INSTANCE_SEC_GROUP}" | egrep "${!INSTANCE_SEC_GROUP}"
                 if [ $? -eq 0 ] ; then
@@ -1279,9 +1279,9 @@ Resources:
                   exit 0
                 fi
                 
-                CLUSTER_SEC_GROUP=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query Clusters[*].SecurityGroup[] --output text --region $REGION || /usr/bin/echo failed)
+                CLUSTER_SEC_GROUP=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query Clusters[*].SecurityGroup[] --output text --region $REGION)
                 /usr/bin/echo "CLUSTER_SEC_GROUP: $CLUSTER_SEC_GROUP"
-                [[ $CLUSTER_SEC_GROUP == 'failed' ]] && exit 1
+                [[ $CLUSTER_SEC_GROUP == '' ]] && exit 1
 
                 /usr/local/bin/aws ec2 authorize-security-group-ingress --group-id $CLUSTER_SEC_GROUP --source-group $INSTANCE_SEC_GROUP --protocol all --region $REGION
               mode: '000700'
@@ -1351,7 +1351,7 @@ Resources:
 
                 C_ACTIVE=""
                 while [ "$C_ACTIVE" != "ACTIVE" ]; do
-                  /usr/bin/echo Waiting for Cluster to be activated...
+                  /usr/bin/echo Waiting for cluster to become active...
                   C_ACTIVE=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query 'Clusters[].State' --region $REGION --output text)
                   /usr/bin/sleep 5
                 done
@@ -1376,34 +1376,34 @@ Resources:
 
                 /usr/bin/echo "Requested number of HSMs: ${!NUM_HSMS_DESIRED}"
 
-                NUM_AZS=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] ' | jq length || /usr/bin/echo failed)
-                [[ $NUM_AZS == 'failed' ]] && exit 1
+                NUM_AZS=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] ' | jq length)
+                [[ $NUM_AZS == '' ]] && exit 1
                 if [ $NUM_AZS -lt $NUM_HSMS_DESIRED ] ; then
                   /usr/bin/echo "Number of AZs configured for the CloudHSM cluster ($NUM_AZS) is less than requested number of HSMs ($NUM_HSMS_DESIRED)"
                   exit 1
                 fi
 
-                NUM_HSMS_CURRENT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length || /usr/bin/echo failed)
-                [[ $NUM_HSMS_CURRENT == 'failed' ]] && exit 1
+                NUM_HSMS_CURRENT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length)
+                [[ $NUM_HSMS_CURRENT == '' ]] && exit 1
                 /usr/bin/echo "Current number of HSMs: ${!NUM_HSMS_CURRENT}"
 
                 # The following process of adding HSMs could be sped up by first creating the HSMs and then checking the state of them together. Current process is serial.
                 NUM_HSMS_TO_PROVISION=$((NUM_HSMS_DESIRED-NUM_HSMS_CURRENT))
                 HSM_INDEX=0
                 while [[ $HSM_INDEX -lt $NUM_HSMS_TO_PROVISION ]];do
-                  AVAILABLE_AZ=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[].AvailabilityZone ] | .[0]' | jq -r '.' || /usr/bin/echo failed)
+                  AVAILABLE_AZ=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[].AvailabilityZone ] | .[0]' | jq -r '.')
                   /usr/bin/echo "AVAILABLE_AZ: $AVAILABLE_AZ"
-                  [[ $AVAILABLE_AZ == 'failed' ]] && exit 1
+                  [[ $AVAILABLE_AZ == '' ]] && exit 1
 
-                  export HSM_ID=$(/usr/local/bin/aws cloudhsmv2 create-hsm --cluster-id $CLUSTER_ID --availability-zone $AVAILABLE_AZ --region $REGION | jq ' .Hsm.HsmId ' |  jq -r '.' || /usr/bin/echo failed)
-                  [[ $HSM_ID == 'failed' ]] && exit 1
+                  export HSM_ID=$(/usr/local/bin/aws cloudhsmv2 create-hsm --cluster-id $CLUSTER_ID --availability-zone $AVAILABLE_AZ --region $REGION | jq ' .Hsm.HsmId ' |  jq -r '.')
+                  [[ $HSM_ID == '' ]] && exit 1
                   /usr/bin/echo "ID of new HSM: ${!HSM_ID}"
 
                   # Wait for new HSM to be listed before checking its state
-                  NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length || /usr/bin/echo failed)
-                  [[ $NUM_HSMS_NOW == 'failed' ]] && exit 1
+                  NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length)
+                  [[ $NUM_HSMS_NOW == '' ]] && exit 1
                   while [[ $NUM_HSMS_NOW -lt $((NUM_HSMS_CURRENT+HSM_INDEX+1)) ]];do
-                    NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length || /usr/bin/echo failed)
+                    NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length)
                     /usr/bin/echo "Waiting for new HSM to be listed. Current number of HSMs is: $NUM_HSMS_NOW"
                     /usr/bin/sleep 5
                   done
@@ -1413,10 +1413,7 @@ Resources:
                     /usr/bin/echo "Waiting for HSM to become active..."
                     /usr/bin/sleep 5
                   done
-                
-                  # Sync the local management config so that user management operations will also affect the newly added HSM
-                  /opt/cloudhsm/bin/configure -m || exit 1
-                  
+
                   HSM_INDEX=$((HSM_INDEX+1))
                 done
               mode: '000700'
