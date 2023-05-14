@@ -1,0 +1,87 @@
+------------------------------------------------------------
+cloudhsm.yml
+------------------------------------------------------------------------------------------------------------------------
+| WARN W11
+|
+| Resource: ["rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineInitActivateExecutionRole", "rStateMachineAlignHsmsExecutionRole", "rLambdaCreateClusterRole", "rLambdaGetClusterStateRole", "rLambdaInitializeSecretsRole", "rLambdaCreateHsmRole", "rLambdaGetHsmStateRole", "rLambdaUpdateClusterSecGroupRole", "rLambdaRetrievePriorCaCertRole", "rLambdaGetClusterCertCsrRole", "rLambdaInternallyIssueClusterCertRole", "rLambdaInitClusterRole", "rLambdaAlignHsmCountRole", "rLambdaGetHsmsStateRole", "rLambdaDeleteSecretsRole", "rLambdaDeleteClusterRole", "rLambdaDeleteHsmsRole", "rClientInstanceRole", "rRunCmdSsmRole"]
+| Line Numbers: [487, 770, 978, 1152, 1271, 1361, 1461, 1553, 1633, 1724, 1812, 1901, 1976, 2090, 2171, 2282, 2368, 2444, 2513, 2600, 3067, 3183]
+|
+| IAM role should not allow * resource on its permissions policy
+
+Notes: The * resource parameter is limited to the region and account of the principal creating the CloudFormation stack. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W89
+|
+| Resource: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterState", "rLambdaInitializeSecrets", "rLambdaCreateHsm", "rLambdaGetHsmState", "rLambdaUpdateClusterSecGroup", "rLambdaRetrievePriorCaCert", "rLambdaGetClusterCertCsr", "rLambdaInternallyIssueClusterCert", "rLambdaInitCluster", "rLambdaAlignHsmCount", "rLambdaGetHsmsState", "rLambdaDeleteSecrets", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
+| Line Numbers: [173, 1319, 1422, 1496, 1592, 1685, 1759, 1857, 1941, 2015, 2131, 2210, 2335, 2403, 2483, 2557, 2647, 2713]
+|
+| Lambda functions should be deployed inside a VPC
+
+Notes: The included Lambda functions only run during creating, updating, and deleting the stack. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W92
+|
+| Resource: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterState", "rLambdaInitializeSecrets", "rLambdaCreateHsm", "rLambdaGetHsmState", "rLambdaUpdateClusterSecGroup", "rLambdaRetrievePriorCaCert", "rLambdaGetClusterCertCsr", "rLambdaInternallyIssueClusterCert", "rLambdaInitCluster", "rLambdaAlignHsmCount", "rLambdaGetHsmsState", "rLambdaDeleteSecrets", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
+| Line Numbers: [173, 1319, 1422, 1496, 1592, 1685, 1759, 1857, 1941, 2015, 2131, 2210, 2335, 2403, 2483, 2557, 2647, 2713]
+|
+| Lambda functions should define ReservedConcurrentExecutions to reserve simultaneous executions
+
+Notes: The included Lambda functions do not need to run concurrently.
+
+------------------------------------------------------------
+| WARN W84
+|
+| Resource: ["rCloudWatchLogsStateMachineCreate", "rCloudWatchLogsStateMachineUpdate", "rCloudWatchLogsStateMachineDelete", "rCloudWatchLogsStateMachineInitActivate", "rCloudWatchLogsStateMachineAlignHsms", "rCloudWatchLogsAgentGroup", "rCloudWatchLogsRunCommand"]
+| Line Numbers: [481, 764, 972, 1146, 1265, 3061, 3177]
+|
+| CloudWatchLogs LogGroup should specify a KMS Key Id to encrypt the log data
+
+Notes: Password and other security sensitive information are not kept in the logs. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W28
+|
+| Resource: ["rClientInstanceSecurityGroup", "rLambdaCustomResourceExecutionRole", "rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineInitActivateExecutionRole", "rStateMachineAlignHsmsExecutionRole", "rLambdaCreateClusterRole", "rLambdaGetClusterStateRole", "rLambdaInitializeSecretsRole", "rLambdaCreateHsmRole", "rLambdaGetHsmStateRole", "rLambdaUpdateClusterSecGroupRole", "rLambdaRetrievePriorCaCertRole", "rLambdaGetClusterCertCsrRole", "rLambdaInternallyIssueClusterCertRole", "rLambdaInitClusterRole", "rLambdaAlignHsmCountRole", "rLambdaGetHsmsStateRole", "rLambdaDeleteSecretsRole", "rLambdaDeleteClusterRole", "rLambdaDeleteHsmsRole", "rLambdaSendCfnFailedRole", "rLambdaSendCfnSuccessRole", "rClientInstanceRole", "rRunCmdSsmRole"]
+| Line Numbers: [2770, 219, 487, 770, 978, 1152, 1271, 1361, 1461, 1553, 1633, 1724, 1812, 1901, 1976, 2090, 2171, 2282, 2368, 2444, 2513, 2600, 2686, 2743, 3067, 3183]
+|
+| Resource found with an explicit name, this disallows updates that require replacement of this resource
+
+Notes: This CloudFormation template has been tested and this may change in the future. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W76
+|
+| Resource: ["rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole"]
+| Line Numbers: [487, 770, 978]
+|
+| SPCM for IAM policy document is higher than 25
+
+Notes: SPCM scoring is not a clear cut indication of whether or not the IAM policy document is correct. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W5
+|
+| Resource: ["rClientInstanceSecurityGroup"]
+| Line Numbers: [2770]
+|
+| Security Groups found with cidr open to world on egress
+
+Notes: The CIDR range is open because this solution uses various package and artifact repositories that make it hard to statically limit to a range of IPs.
+       The egress ports have been limited to 80, 443, and 2223-2225. This may be revisited at a future date, however this has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W29
+|
+| Resource: ["rClientInstanceSecurityGroup"]
+| Line Numbers: [2770]
+|
+| Security Groups found egress with port range instead of just a single port
+
+Notes: The Egress port range (2223-2225) rule for rClientInstanceSecurityGroup is needed in order to work with AWS CloudHSM and HSMs.
+      The AWS CloudHSM document (https://docs.aws.amazon.com/cloudhsm/latest/userguide/configure-sg-client-instance.html) indicates this.
+       This has been reviewed and deemed an acceptable risk.
+
+Failures count: 0
+Warnings count: 96

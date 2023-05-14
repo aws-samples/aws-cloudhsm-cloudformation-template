@@ -1,0 +1,64 @@
+------------------------------------------------------------
+cloudhsm-key-store.yml
+------------------------------------------------------------------------------------------------------------------------
+| WARN W11
+|
+| Resource: ["rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineConnectExecutionRole", "rStateMachineDisconnectExecutionRole", "rLambdaCheckKeyStoreExistsRole", "rLambdaCreateKeyStoreRole", "rLambdaConnectKeyStoreRole", "rLambdaGetKeyStoreStateRole", "rLambdaDisconnectKeyStoreRole", "rLambdaDeleteKeyStoreRole", "rRunCmdSsmRole"]
+| Line Numbers: [311, 426, 553, 688, 803, 882, 986, 1061, 1129, 1197, 1290, 1519]
+|
+| IAM role should not allow * resource on its permissions policy
+
+Notes: The * resource parameter is limited to the region and account of the principal creating the CloudFormation stack. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W89
+|
+| Resource: ["rCustomResourceCloudHsmKeyStore", "rLambdaCheckKeyStoreExists", "rLambdaCreateKeyStore", "rLambdaConnectKeyStore", "rLambdaGetKeyStoreState", "rLambdaDisconnectKeyStore", "rLambdaDeleteKeyStore", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
+| Line Numbers: [107, 846, 917, 1028, 1096, 1164, 1232, 1327, 1393]
+|
+| Lambda functions should be deployed inside a VPC
+
+Notes: The included Lambda functions only run during creating, updating, and deleting the stack. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W92
+|
+| Resource: ["rCustomResourceCloudHsmKeyStore", "rLambdaCheckKeyStoreExists", "rLambdaCreateKeyStore", "rLambdaConnectKeyStore", "rLambdaGetKeyStoreState", "rLambdaDisconnectKeyStore", "rLambdaDeleteKeyStore", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
+| Line Numbers: [107, 846, 917, 1028, 1096, 1164, 1232, 1327, 1393]
+|
+| Lambda functions should define ReservedConcurrentExecutions to reserve simultaneous executions
+
+Notes: The included Lambda functions do not need to run concurrently.
+
+------------------------------------------------------------
+| WARN W84
+|
+| Resource: ["rCloudWatchLogsStateMachineCreate", "rCloudWatchLogsStateMachineUpdate", "rCloudWatchLogsStateMachineDelete", "rCloudWatchLogsStateMachineConnect", "rCloudWatchLogsStateMachineDisconnect", "rCloudWatchLogsRunCommand"]
+| Line Numbers: [305, 420, 547, 682, 797, 1513]
+|
+| CloudWatchLogs LogGroup should specify a KMS Key Id to encrypt the log data
+
+Notes: Password and other security sensitive information are not kept in the logs. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W28
+|
+| Resource: ["rLambdaCustomResourceExecutionRole", "rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineConnectExecutionRole", "rStateMachineDisconnectExecutionRole", "rLambdaCheckKeyStoreExistsRole", "rLambdaCreateKeyStoreRole", "rLambdaConnectKeyStoreRole", "rLambdaGetKeyStoreStateRole", "rLambdaDisconnectKeyStoreRole", "rLambdaDeleteKeyStoreRole", "rLambdaSendCfnFailedRole", "rLambdaSendCfnSuccessRole", "rRunCmdSsmRole"]
+| Line Numbers: [151, 311, 426, 553, 688, 803, 882, 986, 1061, 1129, 1197, 1290, 1366, 1421, 1519]
+|
+| Resource found with an explicit name, this disallows updates that require replacement of this resource
+
+Notes: This CloudFormation template has been tested and this may change in the future. This has been reviewed and deemed an acceptable risk.
+
+------------------------------------------------------------
+| WARN W76
+|
+| Resource: ["rStateMachineCreateExecutionRole", "rStateMachineDeleteExecutionRole"]
+| Line Numbers: [311, 553]
+|
+| SPCM for IAM policy document is higher than 25
+
+Notes: SPCM scoring is not a clear cut indication of whether or not the IAM policy document is correct. This has been reviewed and deemed an acceptable risk.
+
+Failures count: 0
+Warnings count: 53
