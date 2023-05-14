@@ -1,0 +1,1574 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >-
+  Creates an AWS CloudHSM key store for AWS KMS and connects it to a cluster
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Resource Naming Qualifiers
+        Parameters:
+          - pSystem
+          - pEnvPurpose
+      - Label:
+          default: CloudHSM Key Store Information
+        Parameters:
+          - pKeyStoreName
+          - pDeleteKeyStoreUponStackDeletion
+      - Label:
+          default: CloudHSM Cluster Information
+        Parameters:
+          - pCloudHsmClusterId
+          - pCloudHsmAdminPasswordSecretName
+          - pCloudHsmCustCaCertSecretName
+      - Label:
+          default: EC2 Client Instance Information
+        Parameters:
+          - pClientInstanceId
+
+    ParameterLabels:
+      pSystem:
+        default: System identifier used to qualify cloud resource names
+      pEnvPurpose:
+        default: Environment identifier used to qualify cloud resource names
+      pKeyStoreName:
+        default: Name of the CloudHSM key store
+      pDeleteKeyStoreUponStackDeletion:
+        default: Attempt to delete key store during stack deletion
+      pCloudHsmClusterId:
+        default: ID of the CloudHSM cluster
+      pCloudHsmAdminPasswordSecretName:
+        default: Name of CloudHSM admin user password entry in AWS Secrets Manager
+      pCloudHsmCustCaCertSecretName:
+        default: Name of CloudHSM customer CA certificate entry in AWS Secrets Manager
+      pClientInstanceId:
+        default: EC2 instance ID of the client configured to interact with the CloudHSM cluster
+
+Parameters:
+  pSystem:
+    Description: Used to prefix many of the cloud resource names. You can normally use the default value.
+    Type: String
+    Default: cloudhsm-ks
+
+  pEnvPurpose:
+    Description: Used to qualify many of the cloud resource names so that you can more easily manage multiple stacks in the same AWS account
+    Type: String
+    Default: '1'
+
+  pKeyStoreName:
+    Description: Name of the CloudHSM key store
+    Type: String
+    Default: 'cloudhsm'
+
+  pDeleteKeyStoreUponStackDeletion:
+    Description: Attempt to delete key store during stack deletion
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+
+  pCloudHsmClusterId:
+    Description: ID of the CloudHSM cluster
+    Type: String
+    MinLength: 1
+
+  pCloudHsmAdminPasswordSecretName:
+    Description: Name of CloudHSM admin user password entry in AWS Secrets Manager
+    Type: String
+    MinLength: 1
+
+  pCloudHsmCustCaCertSecretName:
+    Description: Name of CloudHSM customer CA certificate entry in AWS Secrets Manager
+    Type: String
+    MinLength: 1
+
+  pClientInstanceId:
+    Description: EC2 instance ID of the client configured to interact with the CloudHSM cluster
+    Type: AWS::EC2::Instance::Id
+
+Resources:
+  rCloudHsmKeyStore:
+    Type: Custom::CustomKeyStoreLauncher
+    Properties:
+      ServiceToken: !GetAtt rCustomResourceCloudHsmKeyStore.Arn
+      KeyStoreName: !Ref pKeyStoreName
+      DeleteKeyStoreUponStackDeletion: !Ref pDeleteKeyStoreUponStackDeletion
+      CloudHsmClusterId: !Ref pCloudHsmClusterId
+      CloudHsmAdminPasswordSecretName: !Ref pCloudHsmAdminPasswordSecretName
+      CloudHsmCustCaCertSecretName:    !Ref pCloudHsmCustCaCertSecretName
+      ClientInstanceId:  !Ref pClientInstanceId
+      SystemId:   !Ref pSystem
+      EnvPurpose: !Ref pEnvPurpose
+      StateMachineCreate: !Ref rStateMachineCreate
+      StateMachineUpdate: !Ref rStateMachineUpdate
+      StateMachineDelete: !Ref rStateMachineDelete
+
+  rCustomResourceCloudHsmKeyStore:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-cfn-custom-resource' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaCustomResourceExecutionRole.Arn     
+      Code:
+        ZipFile: |
+          '''Manages lifecycle CRUD of CloudHSM key store with step functions '''
+          import boto3
+          from botocore.vendored import requests
+          import cfnresponse
+          import json
+          import logging
+          import os
+          import time
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          sfn = boto3.client('stepfunctions')
+
+          def lambda_handler(event, context):
+            CreateStateMachineArn = event['ResourceProperties']['StateMachineCreate']
+            UpdateStateMachineArn = event['ResourceProperties']['StateMachineUpdate']
+            DeleteStateMachineArn = event['ResourceProperties']['StateMachineDelete']
+              
+            if event['RequestType'] == 'Create':
+              logger.info(f'Executing {str(CreateStateMachineArn)} to create key store')
+              sfn.start_execution(stateMachineArn=CreateStateMachineArn,input=json.dumps(event))
+              return
+            elif event['RequestType'] == 'Update':
+              event['KeyStoreId'] = event['PhysicalResourceId']
+              logger.info(f'Executing {str(UpdateStateMachineArn)} to update key store')
+              sfn.start_execution(stateMachineArn=UpdateStateMachineArn,input=json.dumps(event))
+              return
+            elif event['RequestType'] == 'Delete':
+              event['KeyStoreId'] = event['PhysicalResourceId']
+              logger.info(f'Executing {str(DeleteStateMachineArn)} to delete key store')
+              sfn.start_execution(stateMachineArn=DeleteStateMachineArn,input=json.dumps(event))
+              return
+  
+  rLambdaCustomResourceExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-custom'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHsmKeyStoreCustomResourceLambda
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-key-store-cfn-custom-resource*'
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rStateMachineCreate
+                  - !Ref rStateMachineUpdate
+                  - !Ref rStateMachineDelete
+
+  rStateMachineCreate:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-create'
+      RoleArn: !GetAtt rStateMachineCreateExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineCreate.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Creates a CloudHSM key store
+        StartAt: CheckKeyStoreExists
+        States:
+          CheckKeyStoreExists:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaCheckKeyStoreExists}'
+            ResultPath: $.KeyStoreState
+            Next: KeyStoreExists?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          KeyStoreExists?:
+            Type: Choice
+            Choices:
+            - Variable: $.KeyStoreState
+              StringEquals: 'EXISTS'
+              Next: KeyStoreExists
+            Default: CheckCloudHsmCliPkgExists
+          KeyStoreExists:
+            Type: Pass
+            Result: 'KMS key store of same name already exists'
+            ResultPath: $.Error.Cause
+            Next: SendCfnFailed
+          CheckCloudHsmCliPkgExists:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.CheckCloudHsmCliPkgExists
+            Next: CheckKmsUserExists
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('/usr/bin/yum list cloudhsm-cli > /dev/null 2>&1; if [ $? -ne 0 ]; then echo "cloudhsm-cli package not present on EC2 client. Ensure it is installed and configured."; exit 1; fi'))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed       
+          CheckKmsUserExists:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.CheckKmsUserExists
+            Next: CreateKmsUser
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('USERNAME=$(/opt/cloudhsm/bin/cloudhsm-cli user list | jq -r \'.data | .users[]? | select(.username == "kmsuser") | .username\');if [ ! -z "$USERNAME" ]; then echo "kmsuser already exists"; exit 1; fi'))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          CreateKmsUser:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            # Note: Since we don't expect a return value from the supporting Lambda function, we'd prefer to use
+            # "ResultPath: null" so as to not pollute the data with an empty array. However, see this issue
+            # as to why we can't currently use "null" in the YAML form of state machines:
+            # https://github.com/aws-cloudformation/aws-cloudformation-resource-providers-stepfunctions/issues/41
+            # This approach would apply to all tasks where the state machine does not depend on a return value from
+            # a task.
+            ResultPath: $.CreateKmsUser
+            Next: CreateKeyStore
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('PASSWORD=$((/usr/local/bin/aws secretsmanager get-secret-value --secret-id {}) | jq -r \'.SecretString | fromjson.password\');export CLOUDHSM_ROLE=admin;export CLOUDHSM_PIN=admin:$PASSWORD;/opt/cloudhsm/bin/cloudhsm-cli user create --username kmsuser --role crypto-user --password $PASSWORD',$.ResourceProperties.CloudHsmAdminPasswordSecretName))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          CreateKeyStore:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaCreateKeyStore}'
+            ResultPath: $.KeyStoreId
+            Next: ConnectKeyStore
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          ConnectKeyStore:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              StateMachineArn: !Ref rStateMachineConnect
+              Input.$: $
+            ResultPath: $.Exec
+            Next: ConnectKeyStoreError?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          ConnectKeyStoreError?:
+            Type: Choice
+            Choices:
+            - Variable: $.Exec.Output.Cause
+              IsPresent: true
+              Next: PrepareExecError
+            Default: SendCfnSuccess 
+          SendCfnSuccess:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnSuccess}'
+            End: true
+          PrepareExecError:
+            Type: Pass
+            Parameters:
+              Cause.$: $.Exec.Output.Cause
+            ResultPath: $.Error
+            Next: SendCfnFailed
+          SendCfnFailed:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnFailed}'
+            End: true
+
+  rCloudWatchLogsStateMachineCreate:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/create'
+      RetentionInDays: 30
+
+  rStateMachineCreateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-create'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt rLambdaCheckKeyStoreExists.Arn
+                  - !GetAtt rLambdaCreateKeyStore.Arn
+                  - !GetAtt rLambdaSendCfnSuccess.Arn
+                  - !GetAtt rLambdaSendCfnFailed.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:StartAutomationExecution
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${rRunCmdStepFunctionsDocument}:$DEFAULT'
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rStateMachineConnect
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution
+                  - states:StopExecution
+                Resource:
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${rStateMachineConnect.Name}'
+              - Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: 
+                  - !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rStateMachineUpdate:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-update'
+      RoleArn: !GetAtt rStateMachineUpdateExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineUpdate.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Update a CloudHSM key store
+        StartAt: CheckKeyStoreExists
+        States:
+          CheckKeyStoreExists:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaCheckKeyStoreExists}'
+            ResultPath: $.KeyStoreState
+            Next: KeyStoreExists?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          KeyStoreExists?:
+            Type: Choice
+            Choices:
+            - Variable: $.KeyStoreState
+              StringEquals: 'EXISTS'
+              Next: SendCfnSuccess
+            Default: SendCfnSuccess
+          SendCfnSuccess:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnSuccess}'
+            End: true
+          SendCfnFailed:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnFailed}'
+            End: true
+
+  rCloudWatchLogsStateMachineUpdate:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/update'
+      RetentionInDays: 30
+
+  rStateMachineUpdateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-update'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt rLambdaCheckKeyStoreExists.Arn
+                  - !GetAtt rLambdaSendCfnSuccess.Arn
+                  - !GetAtt rLambdaSendCfnFailed.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+  
+  rStateMachineDelete:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-delete'
+      RoleArn: !GetAtt rStateMachineDeleteExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineDelete.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Disconnects CloudHSM key store
+        StartAt: KeyStoreExists?
+        States:
+          KeyStoreExists?:
+            Type: Choice
+            Choices:
+            - Or:
+              - Variable: $.KeyStoreId
+                IsPresent: false
+              - Variable: $.KeyStoreId
+                StringEquals:  'rCloudHsmKeyStore'
+              Next: SendCfnSuccess
+            Default: DisconnectKeyStore        
+          DisconnectKeyStore:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              StateMachineArn: !Ref rStateMachineDisconnect
+              Input.$: $
+            ResultPath: $.Exec
+            Next: DisconnectKeyStoreError?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          DisconnectKeyStoreError?:
+            Type: Choice
+            Choices:
+            - Variable: $.Exec.Output.Cause
+              IsPresent: true
+              Next: PrepareExecError
+            Default: AttemptToDeleteKeyStore? 
+          AttemptToDeleteKeyStore?:
+            Type: Choice
+            Choices:
+            - Variable: $.ResourceProperties.DeleteKeyStoreUponStackDeletion
+              StringEquals: 'true'
+              Next: DeleteKeyStore
+            Default: SendCfnSuccess
+          DeleteKeyStore:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDeleteKeyStore}'
+            ResultPath: $.DeleteKeyStore
+            Next: SendCfnSuccess
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed        
+          SendCfnSuccess:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnSuccess}'
+            End: true
+          PrepareExecError:
+            Type: Pass
+            Parameters:
+              Cause.$: $.Exec.Output.Cause
+            ResultPath: $.Error
+            Next: SendCfnFailed
+          SendCfnFailed:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnFailed}'
+            End: true
+
+  rCloudWatchLogsStateMachineDelete:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/delete'
+      RetentionInDays: 30
+
+  rStateMachineDeleteExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-delete'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt rLambdaCheckKeyStoreExists.Arn
+                  - !GetAtt rLambdaDeleteKeyStore.Arn
+                  - !GetAtt rLambdaSendCfnSuccess.Arn
+                  - !GetAtt rLambdaSendCfnFailed.Arn
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rStateMachineDisconnect
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution
+                  - states:StopExecution
+                Resource:
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${rStateMachineDisconnect.Name}'
+              - Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: 
+                  - !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rStateMachineConnect:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-connect'
+      RoleArn: !GetAtt rStateMachineConnectExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineConnect.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Connects CloudHSM key store to a CloudHSM cluster
+        StartAt: GetKeyStoreState
+        States:
+          GetKeyStoreState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetKeyStoreState}'
+            ResultPath: $.KeyStoreState
+            Next: KeyStoreConnected?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          KeyStoreConnected?:
+            Type: Choice
+            Choices:
+            - Variable: $.KeyStoreState
+              StringEquals: 'CONNECTED'
+              Next: Complete
+            Default: ConnectKeyStore
+          ConnectKeyStore:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaConnectKeyStore}'
+            ResultPath: $.ConnectKeyStore
+            Next: WaitForKeyStoreConnected
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          WaitForKeyStoreConnected:
+            Type: Wait
+            Seconds: 30
+            Next: GetKeyStoreState2
+          GetKeyStoreState2:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetKeyStoreState}'
+            ResultPath: $.KeyStoreState
+            Next: KeyStoreConnected2?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          KeyStoreConnected2?:
+            Type: Choice
+            Choices:
+            - Variable: $.KeyStoreState
+              StringEquals: 'CONNECTED'
+              Next: Complete
+            Default: WaitForKeyStoreConnected
+          Complete:
+            Type: Succeed
+
+  rCloudWatchLogsStateMachineConnect:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/connect'
+      RetentionInDays: 30
+
+  rStateMachineConnectExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-connect'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt rLambdaConnectKeyStore.Arn
+                  - !GetAtt rLambdaGetKeyStoreState.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rStateMachineDisconnect:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-disconnect'
+      RoleArn: !GetAtt rStateMachineDisconnectExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineDisconnect.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Disconnects a CloudHSM key store from a CloudHSM cluster
+        StartAt: GetKeyStoreState
+        States:
+          GetKeyStoreState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetKeyStoreState}'
+            ResultPath: $.KeyStoreState
+            Next: KeyStoreConnected?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          KeyStoreConnected?:
+            Type: Choice
+            Choices:
+            - Variable: $.KeyStoreState
+              StringEquals: 'CONNECTED'
+              Next: DisconnectKeyStore
+            Default: Complete
+          DisconnectKeyStore:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDisconnectKeyStore}'
+            ResultPath: $.DisconnectKeyStore
+            Next: WaitForKeyStoreDisconnected
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          WaitForKeyStoreDisconnected:
+            Type: Wait
+            Seconds: 30
+            Next: GetKeyStoreState2
+          GetKeyStoreState2:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetKeyStoreState}'
+            ResultPath: $.KeyStoreState
+            Next: KeyStoreDisconnected?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          KeyStoreDisconnected?:
+            Type: Choice
+            Choices:
+            - Variable: $.KeyStoreState
+              StringEquals: 'DISCONNECTED'
+              Next: Complete
+            Default: WaitForKeyStoreDisconnected
+          Complete:
+            Type: Succeed
+
+  rCloudWatchLogsStateMachineDisconnect:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/disconnect'
+      RetentionInDays: 30
+
+  rStateMachineDisconnectExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-disconnect'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt rLambdaDisconnectKeyStore.Arn
+                  - !GetAtt rLambdaGetKeyStoreState.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaCheckKeyStoreExists:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-check-key-store' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaCheckKeyStoreExistsRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          kms = boto3.client('kms')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            key_store_name = event['ResourceProperties']['KeyStoreName']
+
+            try:
+              response = kms.describe_custom_key_stores(CustomKeyStoreName=key_store_name)
+            except botocore.exceptions.ClientError as error:
+              if error.response['Error']['Code'] == 'CustomKeyStoreNotFoundException':
+                logger.info(f'Key store {str(key_store_name)} does not already exist')
+                return 'DOESNOTEXIST'
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+ 
+            return 'EXISTS'
+
+  rLambdaCheckKeyStoreExistsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-check'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: KmsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:/aws/lambda/log-group:${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - kms:DescribeCustomKeyStores
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaCreateKeyStore:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-create-key-store' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaCreateKeyStoreRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          kms = boto3.client('kms')
+          sm = boto3.client('secretsmanager')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            key_store_name = event['ResourceProperties']['KeyStoreName']
+            cluster_id = event['ResourceProperties']['CloudHsmClusterId']
+            cloudhsm_admin_password_secret_name = event['ResourceProperties']['CloudHsmAdminPasswordSecretName']
+            cloudhsm_cust_ca_cert_secret_name = event['ResourceProperties']['CloudHsmCustCaCertSecretName']
+
+            try:
+              response = kms.describe_custom_key_stores(CustomKeyStoreName=key_store_name)
+              raise Exception(f'Key store already exists: {key_store_name} {response["CustomKeyStores"]["CustomKeyStoreId"]}')    
+            except botocore.exceptions.ClientError as error:
+              if error.response['Error']['Code'] == 'CustomKeyStoreNotFoundException':
+                logger.info(f'Key store not found: {key_store_name}')
+              else:
+                logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+                raise error
+
+            try:
+              response = sm.get_secret_value(SecretId=cloudhsm_admin_password_secret_name)
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+            
+            admin_password = json.loads(response['SecretString'])['password']
+
+            try:
+              secret_value = sm.get_secret_value(SecretId=cloudhsm_cust_ca_cert_secret_name)
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+            
+            ca_cert = secret_value['SecretString']
+
+            try:
+              key_store = kms.create_custom_key_store(
+                CustomKeyStoreName=key_store_name,
+                CloudHsmClusterId=cluster_id,
+                TrustAnchorCertificate=ca_cert,
+                KeyStorePassword=admin_password,
+                CustomKeyStoreType='AWS_CLOUDHSM'
+              )
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+            
+            return key_store['CustomKeyStoreId']
+
+  rLambdaCreateKeyStoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-create'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: KmsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:/aws/lambda/log-group:${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - kms:DescribeCustomKeyStores
+                  - kms:CreateCustomKeyStore
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: 
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${pCloudHsmAdminPasswordSecretName}-*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${pCloudHsmCustCaCertSecretName}-*'
+                 
+  rLambdaConnectKeyStore:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-connect-key-store' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaConnectKeyStoreRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          kms = boto3.client('kms')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            key_store_id = event['KeyStoreId']
+
+            try:
+              kms.connect_custom_key_store(CustomKeyStoreId=key_store_id)
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+            
+            return
+
+  rLambdaConnectKeyStoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-connect'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: KmsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:/aws/lambda/log-group:${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - kms:ConnectCustomKeyStore
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+                   
+  rLambdaGetKeyStoreState:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-key-store-state' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaGetKeyStoreStateRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          kms = boto3.client('kms')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            key_store_id = event['KeyStoreId']
+
+            try:
+              response = kms.describe_custom_key_stores(CustomKeyStoreId=key_store_id)
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+
+            return response['CustomKeyStores'][0]['ConnectionState']
+
+  rLambdaGetKeyStoreStateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-get'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: KmsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:/aws/lambda/log-group:${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - kms:DescribeCustomKeyStores
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+                 
+  rLambdaDisconnectKeyStore:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-disconnect-key-store' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaDisconnectKeyStoreRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          kms = boto3.client('kms')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            key_store_id = event['KeyStoreId']
+
+            try:
+              kms.disconnect_custom_key_store(CustomKeyStoreId=key_store_id)
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+            
+            return
+
+  rLambdaDisconnectKeyStoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-disconnect'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: KmsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:/aws/lambda/log-group:${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - kms:DisconnectCustomKeyStore
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+                 
+  rLambdaDeleteKeyStore:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-delete-key-store' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaDeleteKeyStoreRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          kms = boto3.client('kms')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            key_store_id = event['KeyStoreId']
+
+            try:
+              paginator = kms.get_paginator('list_keys')
+              response_iterator = paginator.paginate(PaginationConfig={'MaxItems': 40})
+              full_result = response_iterator.build_full_result()
+              kms_keys = []
+              for page in full_result['Keys']:
+                kms_keys.append(page)
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+
+            for kms_key in kms_keys:
+              try:
+                kms.describe_key(KeyId=kms_key['KeyId'])
+              except botocore.exceptions.ClientError as error:
+                logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+                raise error
+
+              if 'CustomKeyStoreId' in kms_key:
+                if kms_key['KeyMetadata']['CustomKeyStoreId'] == key_store_id:
+                  logger.info(f'Keys exists for CloudHSM key store {str(key_store_id)}. Skipping deletion of key store.')
+                  return
+            
+            logger.info(f'Keys are not associated with CloudHSM key store {str(key_store_id)}')
+
+            try:
+              kms.delete_custom_key_store(CustomKeyStoreId=key_store_id)
+            except botocore.exceptions.ClientError as error:
+              logger.Error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+            
+            return
+
+  rLambdaDeleteKeyStoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-delete'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: KmsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:/aws/lambda/log-group:${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - kms:ListKeys
+                  - kms:DescribeKey
+                  - kms:DeleteCustomKeyStore
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+  
+  rLambdaSendCfnFailed:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-send-cfn-error' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaSendCfnFailedRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              logger.info(json.dumps(event, indent=2, default=str))
+              
+              if 'KeyStoreId' in event:
+                physical_resource_id = event['KeyStoreId']
+              else:
+                physical_resource_id = 'rCloudHsmKeyStore'
+
+              response_data = {}
+
+              try:
+                reason_json = json.loads(event['Error']['Cause'])
+                reason = reason_json['errorMessage']
+              except:
+                reason = event['Error'].get('Cause')
+                if not reason: 
+                  reason = json.dumps(event['Error'],indent=2,default=str)
+              
+              cfnresponse.send(event, context, cfnresponse.FAILED, response_data, physical_resource_id, False, reason)
+
+              return
+
+  rLambdaSendCfnFailedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-send-failed'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+
+  rLambdaSendCfnSuccess:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-send-cfn-response' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaSendCfnSuccessRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          from botocore.vendored import requests
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            if event['RequestType'] == 'Create':
+              physical_resource_id = event['KeyStoreId']
+            else:
+              physical_resource_id = event['PhysicalResourceId']
+            
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {'key_store_id': physical_resource_id}, physical_resource_id)
+
+  rLambdaSendCfnSuccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-send-success'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+
+  rRunCmdStepFunctionsDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: !Sub '${pSystem}-${pEnvPurpose}-run-cmd-step-functions'
+      DocumentType: Automation
+      TargetType: '/AWS::EC2::Host'
+      Content:
+        schemaVersion: '0.3'
+        assumeRole: !GetAtt rRunCmdSsmRole.Arn
+        parameters:
+          InstanceIds:
+            type: StringList
+            description: "(Required) The IDs of the instances where you want to run
+              the command."
+          taskToken:
+            type: String
+            description: "(Required) Step Function task token for callback response."
+          Commands:
+            type: StringList
+            description: "(Required) Specify a shell script or a command to run."
+          workingDirectory:
+            type: String
+            default: '""'
+            description: "(Optional) The path to the working directory on your instance."
+          executionTimeout:
+            type: String
+            description: "(Optional) The time in seconds for a command to complete
+              before it is considered to have failed. Default is 3600 (1 hour). Maximum
+              is 172800 (48 hours)."
+            default: '3600'
+        mainSteps:
+        - name: RunCommand
+          action: aws:runCommand
+          inputs:
+            DocumentName: AWS-RunShellScript
+            Parameters:
+              commands: "{{Commands}}"
+              workingDirectory: "{{workingDirectory}}"
+              executionTimeout: "{{executionTimeout}}"
+            InstanceIds: "{{InstanceIds}}"
+            CloudWatchOutputConfig: 
+              CloudWatchOutputEnabled: true
+              CloudWatchLogGroupName: !Ref rCloudWatchLogsRunCommand
+          nextStep: SendTaskSuccess
+          onFailure: step:SendTaskFailure
+          onCancel: step:SendTaskFailure
+        - name: SendTaskSuccess
+          action: aws:executeAwsApi
+          inputs:
+            Service: stepfunctions
+            Api: send_task_success
+            taskToken: "{{taskToken}}"
+            output: "{}"
+          isEnd: true
+          timeoutSeconds: 50
+        - name: SendTaskFailure
+          action: aws:executeAwsApi
+          inputs:
+            Service: stepfunctions
+            Api: send_task_failure
+            taskToken: "{{taskToken}}"
+            error: "Automation document error on EC2 instance"
+            cause: "SSM aws:runCommand output: {{RunCommand.Output}}; Review logs for command ID: {{RunCommand.CommandId}}"
+          timeoutSeconds: 50
+
+  rCloudWatchLogsRunCommand:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/${pSystem}-${pEnvPurpose}/run-command'
+      RetentionInDays: 30
+
+  rRunCmdSsmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ssm.amazonaws.com
+          Action: sts:AssumeRole
+        Version: '2012-10-17'
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-ssm'
+      Policies:
+      - PolicyName: sync-run-shell-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ssm:DescribeInstanceInformation
+            Resource: '*'
+          - Effect: Allow
+            Action: ssm:SendCommand
+            Resource:
+              - !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${pClientInstanceId}'
+              - !Sub 'arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript'
+          - Effect: Allow
+            Action:
+              - ssm:ListCommands
+              - ssm:ListCommandInvocations
+            Resource:
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*'
+          - Effect: Allow
+            Action:
+              - states:SendTaskFailure
+              - states:SendTaskSuccess
+            Resource:
+              - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${pSystem}-${pEnvPurpose}-*'
+
+Outputs:
+  oCloudHsmKeyStoreId:
+    Description: The ID of the Cloud HSM key store
+    Value: !GetAtt rCloudHsmKeyStore.key_store_id
