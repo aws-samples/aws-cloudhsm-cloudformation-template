@@ -68,7 +68,7 @@ Parameters:
   pStackScope:
     Description:  "Scope of the stack to create: 'with-custom-key-store': CloudHSM cluster + EC2 client instance + KMS custom key store; 'cluster-and-client-only': CloudHSM cluster + EC2 client instance"
     Type: String
-    Default: cluster-and-client-only
+    Default: with-custom-key-store
     AllowedValues:
       - with-custom-key-store
       - cluster-and-client-only
@@ -109,7 +109,7 @@ Parameters:
 
   pClientInstanceAmiSsmParameter:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Description: SSM parameter name for EC2 Amazon Machine Image (AMI) for the client instance
+    Description: SSM paramater name for EC2 Amazon Machine Image (AMI) for the client instance
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs
 
   pClientInstanceAmiId:
@@ -1056,7 +1056,7 @@ Resources:
             - 03-resolve-cluster-cert
             - 04-initialize-cluster
             - 05-config-security-group
-            - 06-config-cloudhsm-cli
+            - 06-start-client-service
             - 07-activate-cluster
             - 08-add-hsms
           with-custom-key-store:
@@ -1065,7 +1065,7 @@ Resources:
             - 03-resolve-cluster-cert
             - 04-initialize-cluster
             - 05-config-security-group
-            - 06-config-cloudhsm-cli
+            - 06-start-client-service
             - 07-activate-cluster
             - 08-add-hsms
             - 09-create-kms-custom-key-store
@@ -1158,9 +1158,9 @@ Resources:
                 /usr/bin/rm -rf awscliv2.zip ./aws 
             04-install-cloudhsm-client:
               command: >-
-                /usr/bin/wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-cli-5.8.0-2.el7.x86_64.rpm &&
-                /usr/bin/yum install -y ./cloudhsm-cli-5.8.0-2.el7.x86_64.rpm &&
-                /usr/bin/rm cloudhsm-cli-5.8.0-2.el7.x86_64.rpm
+                /usr/bin/wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-client-latest.el7.x86_64.rpm &&
+                /usr/bin/yum install -y ./cloudhsm-client-latest.el7.x86_64.rpm &&
+                /usr/bin/rm cloudhsm-client-latest.el7.x86_64.rpm
         03-resolve-cluster-cert:
           files:
             /root/cloudhsm-work/resolve-cluster-cert.sh:
@@ -1269,9 +1269,9 @@ Resources:
                 INSTANCE_ID=$(curl 169.254.169.254/latest/meta-data/instance-id/)
                 /usr/bin/echo $INSTANCE_ID
                 
-                INSTANCE_SEC_GROUP=$(/usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $REGION)
+                INSTANCE_SEC_GROUP=$(/usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --query Reservations[*].Instances[*].SecurityGroups[*].GroupId --output text --region $REGION || /usr/bin/echo failed)
                 /usr/bin/echo "INSTANCE_SEC_GROUP: $INSTANCE_SEC_GROUP"
-                [[ $INSTANCE_SEC_GROUP == '' ]] && exit 1
+                [[ $INSTANCE_SEC_GROUP == 'failed' ]] && exit 1
 
                 /usr/local/bin/aws ec2 describe-security-groups --group-ids $CLUSTER_SEC_GROUP --filters Name=ip-permission.group-id,Values="${!INSTANCE_SEC_GROUP}" | egrep "${!INSTANCE_SEC_GROUP}"
                 if [ $? -eq 0 ] ; then
@@ -1279,9 +1279,9 @@ Resources:
                   exit 0
                 fi
                 
-                CLUSTER_SEC_GROUP=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query Clusters[*].SecurityGroup[] --output text --region $REGION)
+                CLUSTER_SEC_GROUP=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query Clusters[*].SecurityGroup[] --output text --region $REGION || /usr/bin/echo failed)
                 /usr/bin/echo "CLUSTER_SEC_GROUP: $CLUSTER_SEC_GROUP"
-                [[ $CLUSTER_SEC_GROUP == '' ]] && exit 1
+                [[ $CLUSTER_SEC_GROUP == 'failed' ]] && exit 1
 
                 /usr/local/bin/aws ec2 authorize-security-group-ingress --group-id $CLUSTER_SEC_GROUP --source-group $INSTANCE_SEC_GROUP --protocol all --region $REGION
               mode: '000700'
@@ -1290,40 +1290,47 @@ Resources:
           commands:
             01-config-security-group:
               command: /root/cloudhsm-work/config-security-group.sh
-        06-config-cloudhsm-cli:
+        06-start-client-service:
           files:
-            /root/cloudhsm-work/config-cloudhsm-cli.sh:
+            /root/cloudhsm-work/update-hsm-data.sh:
               content: !Sub |
                 #!/bin/bash
 
                 CLUSTER_ID=${rCloudHsmCluster.cluster_id}
                 REGION=${AWS::Region}
 
-                /opt/cloudhsm/bin/configure-cli -a $(/usr/local/bin/aws cloudhsmv2  describe-clusters --filters clusterIds=$CLUSTER_ID --query "Clusters[0].Hsms[0].EniIp" --output text --region $REGION)
+                /opt/cloudhsm/bin/configure -a $(/usr/local/bin/aws cloudhsmv2  describe-clusters --filters clusterIds=$CLUSTER_ID --query "Clusters[0].Hsms[0].EniIp" --output text --region $REGION)
               mode: '000700'
               owner: root
               group: root
           commands:
-            01-config-cloudhsm-cli:
-              command: /root/cloudhsm-work/config-cloudhsm-cli.sh
+            00-stop-client-service:
+              command: systemctl stop cloudhsm-client.service
+            01-update-hsm-data:
+              command: /root/cloudhsm-work/update-hsm-data.sh
+            02-enable-and-start-client-service:
+              command: >- 
+                systemctl enable cloudhsm-client.service && 
+                systemctl start  cloudhsm-client.service &&
+                /usr/bin/sleep 5
         07-activate-cluster:
           files:
-            /root/cloudhsm-work/activate-cluster.expect:
+            /root/cloudhsm-work/set-crypto-officer-password.expect:
               content: |
                 #!/usr/bin/expect -f
                 set password [lindex $argv 0]
-                spawn /opt/cloudhsm/bin/cloudhsm-cli interactive
-                expect -exact "aws-cloudhsm >"
-                send -- "user list\r"
-                expect -exact "aws-cloudhsm >"
-                send -- "cluster activate\r"
-                expect -- "Enter password:"
-                send -- "$password\r"
-                expect -- "Confirm password:"
-                send -- "$password\r"
-                expect -exact "aws-cloudhsm >"
-                send -- "user list\r"
-                expect -exact "aws-cloudhsm >"
+                spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "loginHSM PRECO admin password\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "changePswd PRECO admin $password\r"
+                expect -- "Do you want to continue(y/n)?"
+                send -- "y\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect -exact "aws-cloudhsm>"
                 send -- "quit\r"
                 expect eof
               mode: '000700'
@@ -1347,11 +1354,11 @@ Resources:
                 [[ $(/usr/bin/echo $CHECK_PASSWORD | awk '{print match($0,"error")}') -gt 0 ]] && /usr/bin/echo "Failed to retrieve password from secrets manager" && exit 1
                 INITIAL_PASSWORD=$(/usr/bin/echo $CHECK_PASSWORD | jq -r '.SecretString | fromjson.password')
 
-                { time ./activate-cluster.expect $INITIAL_PASSWORD; } 2> activate-cluster-time.txt 1> /dev/null
+                { time ./set-crypto-officer-password.expect $INITIAL_PASSWORD; } 2> set-crypto-officer-password-time.txt 1> /dev/null
 
                 C_ACTIVE=""
                 while [ "$C_ACTIVE" != "ACTIVE" ]; do
-                  /usr/bin/echo Waiting for cluster to become active...
+                  /usr/bin/echo Waiting for Cluster to be activated...
                   C_ACTIVE=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --query 'Clusters[].State' --region $REGION --output text)
                   /usr/bin/sleep 5
                 done
@@ -1376,34 +1383,34 @@ Resources:
 
                 /usr/bin/echo "Requested number of HSMs: ${!NUM_HSMS_DESIRED}"
 
-                NUM_AZS=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] ' | jq length)
-                [[ $NUM_AZS == '' ]] && exit 1
+                NUM_AZS=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] ' | jq length || /usr/bin/echo failed)
+                [[ $NUM_AZS == 'failed' ]] && exit 1
                 if [ $NUM_AZS -lt $NUM_HSMS_DESIRED ] ; then
                   /usr/bin/echo "Number of AZs configured for the CloudHSM cluster ($NUM_AZS) is less than requested number of HSMs ($NUM_HSMS_DESIRED)"
                   exit 1
                 fi
 
-                NUM_HSMS_CURRENT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length)
-                [[ $NUM_HSMS_CURRENT == '' ]] && exit 1
+                NUM_HSMS_CURRENT=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length || /usr/bin/echo failed)
+                [[ $NUM_HSMS_CURRENT == 'failed' ]] && exit 1
                 /usr/bin/echo "Current number of HSMs: ${!NUM_HSMS_CURRENT}"
 
                 # The following process of adding HSMs could be sped up by first creating the HSMs and then checking the state of them together. Current process is serial.
                 NUM_HSMS_TO_PROVISION=$((NUM_HSMS_DESIRED-NUM_HSMS_CURRENT))
                 HSM_INDEX=0
                 while [[ $HSM_INDEX -lt $NUM_HSMS_TO_PROVISION ]];do
-                  AVAILABLE_AZ=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[].AvailabilityZone ] | .[0]' | jq -r '.')
+                  AVAILABLE_AZ=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query 'Clusters' | jq ' [ .[0].SubnetMapping | keys ][0] - [ .[0].Hsms[].AvailabilityZone ] | .[0]' | jq -r '.' || /usr/bin/echo failed)
                   /usr/bin/echo "AVAILABLE_AZ: $AVAILABLE_AZ"
-                  [[ $AVAILABLE_AZ == '' ]] && exit 1
+                  [[ $AVAILABLE_AZ == 'failed' ]] && exit 1
 
-                  export HSM_ID=$(/usr/local/bin/aws cloudhsmv2 create-hsm --cluster-id $CLUSTER_ID --availability-zone $AVAILABLE_AZ --region $REGION | jq ' .Hsm.HsmId ' |  jq -r '.')
-                  [[ $HSM_ID == '' ]] && exit 1
-                  /usr/bin/echo "ID of new HSM: $HSM_ID"
+                  export HSM_ID=$(/usr/local/bin/aws cloudhsmv2 create-hsm --cluster-id $CLUSTER_ID --availability-zone $AVAILABLE_AZ --region $REGION | jq ' .Hsm.HsmId ' |  jq -r '.' || /usr/bin/echo failed)
+                  [[ $HSM_ID == 'failed' ]] && exit 1
+                  /usr/bin/echo "ID of new HSM: ${!HSM_ID}"
 
                   # Wait for new HSM to be listed before checking its state
-                  NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length)
-                  [[ $NUM_HSMS_NOW == '' ]] && exit 1
+                  NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length || /usr/bin/echo failed)
+                  [[ $NUM_HSMS_NOW == 'failed' ]] && exit 1
                   while [[ $NUM_HSMS_NOW -lt $((NUM_HSMS_CURRENT+HSM_INDEX+1)) ]];do
-                    NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length)
+                    NUM_HSMS_NOW=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq length || /usr/bin/echo failed)
                     /usr/bin/echo "Waiting for new HSM to be listed. Current number of HSMs is: $NUM_HSMS_NOW"
                     /usr/bin/sleep 5
                   done
@@ -1413,15 +1420,10 @@ Resources:
                     /usr/bin/echo "Waiting for HSM to become active..."
                     /usr/bin/sleep 5
                   done
-
-                  export HSM_IP_ADDR=$(/usr/local/bin/aws cloudhsmv2 describe-clusters --filters clusterIds=$CLUSTER_ID --region $REGION --query Clusters[0].Hsms[] | jq '.[] | select(.HsmId==env.HSM_ID) | .EniIp' | jq -r '.' )
-                  [[ $HSM_IP_ADDR == '' ]] && exit 1
-                  /usr/bin/echo "HSM IP address: $HSM_IP_ADDR"
+                
+                  # Sync the local management config so that user management operations will also affect the newly added HSM
+                  /opt/cloudhsm/bin/configure -m || exit 1
                   
-                  # Workaround until "/opt/cloudhsm/bin/configure-cli -a <IP address>" might start supporting appending of entries
-                  /usr/bin/cp /opt/cloudhsm/etc/cloudhsm-cli.cfg /opt/cloudhsm/etc/cloudhsm-cli.cfg.bak 
-                  /usr/bin/jq '.clusters[0].cluster.servers += [{ "hostname": env.HSM_IP_ADDR, "port": 2223,"enable": true }]' /opt/cloudhsm/etc/cloudhsm-cli.cfg > tmp.$$.cfg && /usr/bin/mv tmp.$$.cfg /opt/cloudhsm/etc/cloudhsm-cli.cfg
-
                   HSM_INDEX=$((HSM_INDEX+1))
                 done
               mode: '000700'
@@ -1436,16 +1438,18 @@ Resources:
               content: |
                 #!/usr/bin/expect -f
                 set password [lindex $argv 0]
-                spawn /opt/cloudhsm/bin/cloudhsm-cli interactive
-                expect -exact "aws-cloudhsm >"
-                send -- "user list\r"
-                expect -exact "aws-cloudhsm >"
-                send -- "login --username admin --role admin --password $password\r"
-                expect -exact "aws-cloudhsm >"
-                send -- "user create --username kmsuser --role crypto-user --password $password\r"
-                expect -exact "aws-cloudhsm >"
-                send -- "user list\r"
-                expect "aws-cloudhsm >"
+                spawn /opt/cloudhsm/bin/cloudhsm_mgmt_util /opt/cloudhsm/etc/cloudhsm_mgmt_util.cfg
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "loginHSM CO admin $password\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "createUser CU kmsuser $password\r"
+                expect -- "Do you want to continue(y/n)?"
+                send -- "y\r"
+                expect -exact "aws-cloudhsm>"
+                send -- "listUsers\r"
+                expect "aws-cloudhsm>"
                 send -- "quit\r"
                 expect eof
               mode: '000700'
