@@ -1,0 +1,3258 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >-
+  Creates, updates, and deletes an AWS CloudHSM cluster
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Resource Naming Qualifiers
+        Parameters:
+          - pSystem
+          - pEnvPurpose
+      - Label:
+          default: CloudHSM Cluster Configuration
+        Parameters:
+          - pSubnets
+          - pHsmsPerSubnet
+          - pHsmType
+          - pUseExternalPkiProcess
+          - pExternallyProvidedCertsReady
+          - pBackupRetentionDays
+          - pBackupId
+      - Label:
+          default: EC2 Client Instance Configuration
+        Parameters:
+          - pClientPkg
+          - pClientVpcId
+          - pClientSubnet
+          - pClientType
+          - pClientAmiSsmParameter
+          - pClientAmiId
+
+    ParameterLabels:
+      pSystem:
+        default: System identifier used to qualify cloud resource names
+      pEnvPurpose:
+        default: Environment identifier used to qualify cloud resource names
+      pSubnets:
+        default: Subnets to use for the CloudHSM cluster
+      pHsmsPerSubnet:
+        default: Number of HSMs per subnet to create in the CloudHSM cluster
+      pHsmType:
+        default: Type of HSM to use in the cluster. Currently the only supported value is "hsm1.medium"
+      pUseExternalPkiProcess:
+        default: Use your own PKI process to issue cluster certificate?
+      pExternallyProvidedCertsReady:
+        default: Have externally issued cluster and CA certificates been uploaded?
+      pBackupRetentionDays:
+        default: Number of days to retain backups (specify 7 to 379)
+      pBackupId:
+        default: ID of CloudHSM cluster backup. Specify when creating cluster from a backup.
+      pClientPkg:
+        default: CloudHSM client package to install
+      pClientVpcId:
+        default: ID of the VPC in which to create the EC2 client instance
+      pClientSubnet:
+        default: ID of the subnet in which to create the EC2 client instance
+      pClientType:
+        default: EC2 instance type for the client instance
+      pClientAmiSsmParameter:
+        default: SSM Parameter Name for EC2 Amazon Machine Image (AMI) for the client instance
+      pClientAmiId:
+        default: ID for EC2 Amazon Machine Image (AMI) for the client instance
+
+Parameters:
+  pSystem:
+    Description: Used to prefix many of the cloud resource names. You can normally use the default value.
+    Type: String
+    Default: cloudhsm
+
+  pEnvPurpose:
+    Description: Used to qualify many of the cloud resource names so that you can more easily manage multiple stacks in the same AWS account
+    Type: String
+    Default: '1'
+
+  pSubnets:
+    Description: Subnets to use for the CloudHSM cluster
+    Type: List<AWS::EC2::Subnet::Id>
+
+  pHsmsPerSubnet:
+    Description: Number of HSMs per subnet to create in the CloudHSM cluster
+    Type: Number
+    Default: 1
+    MinValue: 1
+
+  pHsmType:
+    Description: Type of HSM to use in the cluster. Currently the only supported value is "hsm1.medium"
+    Type: String
+    Default: hsm1.medium
+  
+  pUseExternalPkiProcess:
+    Description: Use your own PKI process to issue cluster certificate?
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+
+  pExternallyProvidedCertsReady:
+    Description: Have externally issued cluster and CA certificates been uploaded?
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+
+  pBackupRetentionDays:
+    Description: Number of days to retain CloudHSM cluster backups (specify 7 to 379)
+    Type: Number
+    MinValue: 7
+    MaxValue: 379
+    Default: 90
+
+  pBackupId:
+    Description: ID of CloudHSM cluster backup. Specify when creating cluster from a backup.
+    Type: String
+    Default: ''   
+
+  pClientPkg:
+    Description: CloudHSM client package to install
+    Type: String
+    Default: cloudhsm-client
+    AllowedValues:
+      - cloudhsm-client
+      - cloudhsm-cli
+ 
+  pClientVpcId:
+    Description: ID of the VPC in which to create the EC2 client instance
+    Type: AWS::EC2::VPC::Id
+
+  pClientSubnet:
+    Description: ID of the subnet in which to create the EC2 client instance
+    Type: AWS::EC2::Subnet::Id
+
+  pClientType:
+    Description: Enter t3a.small, t3a.medium. The EC2 instance is a critical component for automating the provisioning.
+    Type: String
+    Default: t3a.small
+
+  pClientAmiSsmParameter:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: SSM parameter name for EC2 Amazon Machine Image (AMI) for the client instance
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-ebs
+
+  pClientAmiId:
+    Description: ID for EC2 Amazon Machine Image (AMI) for the client instance (Optional. When specified, overrides SSM parameter)
+    Type: String
+
+Conditions:
+  cUseAmiId: !Not [!Equals [ !Ref 'pClientAmiId', '' ] ]
+  cUseInternalPkiProcess: !Equals [ !Ref 'pUseExternalPkiProcess', false ]
+
+Resources:
+  rCloudHsmCluster:
+    Type: Custom::CustomClusterLauncher
+    Properties:
+      ServiceToken: !GetAtt rCustomResourceCloudHsmCluster.Arn
+      Subnets:          !Ref pSubnets
+      HsmsPerSubnet:    !Ref pHsmsPerSubnet
+      HsmType:          !Ref pHsmType
+      ClientInstanceId: !Ref rClientInstance
+      ClientPkg: !Ref pClientPkg
+      UseExternalPkiProcess:        !Ref pUseExternalPkiProcess
+      ExternallyProvidedCertsReady: !Ref pExternallyProvidedCertsReady
+      InternalRootCaArn:     !If [ cUseInternalPkiProcess, !GetAtt rRootCa.Arn,     !Ref 'AWS::NoValue' ]
+      InternalRootCaCertArn: !If [ cUseInternalPkiProcess, !GetAtt rRootCaCert.Arn, !Ref 'AWS::NoValue' ] 
+      BackupRetentionDays: !Ref pBackupRetentionDays
+      BackupId:   !Ref pBackupId
+      SystemId:   !Ref pSystem
+      EnvPurpose: !Ref pEnvPurpose
+      StateMachineCreate: !Ref rStateMachineCreate
+      StateMachineUpdate: !Ref rStateMachineUpdate
+      StateMachineDelete: !Ref rStateMachineDelete
+
+  rCustomResourceCloudHsmCluster:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-cfn-custom-resource' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaCustomResourceExecutionRole.Arn     
+      Code:
+        ZipFile: |
+          '''Manages lifecycle CRUD of CloudHSM cluster with step functions '''
+          import boto3
+          from botocore.vendored import requests
+          import cfnresponse
+          import json
+          import logging
+          import os
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          sfn = boto3.client('stepfunctions')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event,   indent=2, default=str))
+            logger.info(context)
+
+            CreateStateMachineArn = event['ResourceProperties']['StateMachineCreate']
+            UpdateStateMachineArn = event['ResourceProperties']['StateMachineUpdate']
+            DeleteStateMachineArn = event['ResourceProperties']['StateMachineDelete']
+              
+            if event['RequestType'] == 'Create':
+              logger.info(f'Executing {str(CreateStateMachineArn)} to create cluster')
+              sfn.start_execution(stateMachineArn=CreateStateMachineArn,input=json.dumps(event))
+              return
+            elif event['RequestType'] == 'Update':
+              event['ClusterId'] = event['PhysicalResourceId']
+              logger.info(f'Executing {str(UpdateStateMachineArn)} to update cluster')
+              sfn.start_execution(stateMachineArn=UpdateStateMachineArn,input=json.dumps(event))
+              return
+            elif event['RequestType'] == 'Delete':
+              event['ClusterId'] = event['PhysicalResourceId']
+              logger.info(f'Executing {str(DeleteStateMachineArn)} to delete cluster')
+              sfn.start_execution(stateMachineArn=DeleteStateMachineArn,input=json.dumps(event))
+              return
+  
+  rLambdaCustomResourceExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-custom'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHsmCustomResourceLambda
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-cluster-cfn-custom-resource*'
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rStateMachineCreate
+                  - !Ref rStateMachineUpdate
+                  - !Ref rStateMachineDelete
+
+  rStateMachineCreate:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-create'
+      RoleArn: !GetAtt rStateMachineCreateExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineCreate.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Creates a CloudHSM cluster including an initial HSM
+        StartAt: CreateCluster
+        States:
+          CreateCluster:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaCreateCluster}'
+            ResultPath: $.ClusterId
+            Next: WaitForClusterCreate
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          WaitForClusterCreate:
+            Type: Wait
+            Seconds: 30
+            Next: GetClusterState
+          GetClusterState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetClusterState}'
+            ResultPath: $.ClusterState
+            Next: ClusterReady?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          ClusterReady?:
+            Type: Choice
+            Choices:
+            - Variable: $.ClusterState
+              StringEquals: 'UNINITIALIZED'
+              Next: InitializeSecrets
+            - Variable: $.ClusterState
+              StringEquals: 'ACTIVE'
+              Next: CreateFirstHsm
+            Default: WaitForClusterCreate
+          InitializeSecrets:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaInitializeSecrets}'
+            # Note: Since we don't expect a return value from the supporting Lambda function, we'd prefer to use
+            # "ResultPath: null" so as to not pollute the data with an empty array. However, see this issue
+            # as to why we can't currently use "null" in the YAML form of state machines:
+            # https://github.com/aws-cloudformation/aws-cloudformation-resource-providers-stepfunctions/issues/41
+            # This approach would apply to all tasks where the state machine does not depend on a return value from
+            # a task.
+            ResultPath: $.InitializeSecrets
+            Next: CreateFirstHsm
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          CreateFirstHsm:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaCreateHsm}'
+            ResultPath: $.HsmId
+            Next: WaitForFirstHsmActive
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          WaitForFirstHsmActive:
+            Type: Wait
+            Seconds: 30
+            Next: GetFirstHsmState
+          GetFirstHsmState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetHsmState}'
+            ResultPath: $.HsmState
+            Next: FirstHsmActive?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          FirstHsmActive?:
+            Type: Choice
+            Choices:
+            - Variable: $.HsmState
+              StringEquals: 'ACTIVE'
+              Next: UpdateClusterSecGroup
+            Default: WaitForFirstHsmActive
+          UpdateClusterSecGroup:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaUpdateClusterSecGroup}'
+            ResultPath: $.UpdateClusterSecGroup
+            Next: CreateClusterFromBackup?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          CreateClusterFromBackup?:
+            Type: Choice
+            Choices:
+            - Variable: $.ResourceProperties.BackupId
+              StringEquals: ''
+              Next: GetClusterCertCsr
+            Default: RetrievePriorCaCert
+          RetrievePriorCaCert:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaRetrievePriorCaCert}'
+            ResultPath: $.RetrievePriorCaCert
+            Next: InitActivateCluster
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          GetClusterCertCsr:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetClusterCertCsr}'
+            ResultPath: $.GetClusterCertCsr
+            Next: UseExternalPkiProcess?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          UseExternalPkiProcess?:
+            Type: Choice
+            Choices:
+            - Variable: $.ResourceProperties.UseExternalPkiProcess
+              StringEquals: 'true'
+              Next: SendCfnSuccess
+            Default: InternallyIssueClusterCert
+          InternallyIssueClusterCert:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaInternallyIssueClusterCert}'
+            ResultPath: $.InternallyIssueClusterCert
+            Next: InitActivateCluster
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          InitActivateCluster:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              StateMachineArn: !Ref rStateMachineInitActivateCluster
+              Input.$: $
+            ResultPath: $.Exec
+            Next: InitActivateClusterError?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          InitActivateClusterError?:
+            Type: Choice
+            Choices:
+            - Variable: $.Exec.Output.Cause
+              IsPresent: true
+              Next: PrepareExecError
+            Default: CreateRemainingHsms 
+          CreateRemainingHsms:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              StateMachineArn: !Ref rStateMachineAlignHsms
+              Input.$: $
+            ResultPath: $.Exec
+            Next: CreateRemainingHsmsError?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          CreateRemainingHsmsError?:
+            Type: Choice
+            Choices:
+            - Variable: $.Exec.Output.Cause
+              IsPresent: true
+              Next: PrepareExecError
+            Default: InstallClientPkg? 
+          InstallClientPkg?:
+            Type: Choice
+            Choices:
+            - Variable: $.ResourceProperties.ClientPkg
+              StringEquals: 'cloudhsm-client'
+              Next: InstallClientPkg
+            Default: SendCfnSuccess
+          InstallClientPkg:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.InstallClientPkg
+            Next: SendCfnSuccess
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('sudo /root/cloudhsm-work/cloudhsm-client-install.sh;sudo /root/cloudhsm-work/cloudhsm-update-config.sh {}',$.ClusterId))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          SendCfnSuccess:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnSuccess}'
+            End: true
+          PrepareExecError:
+            Type: Pass
+            Parameters:
+              Cause.$: $.Exec.Output.Cause
+            ResultPath: $.Error
+            Next: SendCfnFailed
+          SendCfnFailed:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnFailed}'
+            End: true
+
+  rCloudWatchLogsStateMachineCreate:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/create'
+      RetentionInDays: 30
+
+  rStateMachineCreateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-create'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt rLambdaCreateCluster.Arn
+                  - !GetAtt rLambdaGetClusterState.Arn
+                  - !GetAtt rLambdaInitializeSecrets.Arn
+                  - !GetAtt rLambdaCreateHsm.Arn
+                  - !GetAtt rLambdaGetHsmState.Arn
+                  - !GetAtt rLambdaUpdateClusterSecGroup.Arn
+                  - !GetAtt rLambdaRetrievePriorCaCert.Arn
+                  - !GetAtt rLambdaGetClusterCertCsr.Arn
+                  - !GetAtt rLambdaInternallyIssueClusterCert.Arn
+                  - !GetAtt rLambdaSendCfnSuccess.Arn
+                  - !GetAtt rLambdaSendCfnFailed.Arn
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rStateMachineInitActivateCluster
+                  - !Ref rStateMachineAlignHsms
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution
+                  - states:StopExecution
+                Resource:
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${rStateMachineInitActivateCluster.Name}'
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${rStateMachineAlignHsms.Name}'
+              - Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: 
+                  - !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule'
+              - Effect: Allow
+                Action:
+                  - ssm:StartAutomationExecution
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${rRunCmdStepFunctionsDocument}:$DEFAULT'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rStateMachineUpdate:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-update'
+      RoleArn: !GetAtt rStateMachineUpdateExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineUpdate.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Updates a CloudHSM cluster
+        StartAt: Ec2ClientChanged?
+        States:
+          Ec2ClientChanged?:
+            Type: Choice
+            Choices:
+            - Variable: $.ResourceProperties.ClientInstanceId
+              StringEqualsPath: $.OldResourceProperties.ClientInstanceId
+              Next: ExternallyProvidedCertsReady?
+            Default: UpdateEc2ClientConfig
+          UpdateEc2ClientConfig:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.UpdateEc2ClientConfig
+            Next: ExternallyProvidedCertsReady?
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('sudo /root/cloudhsm-work/cloudhsm-update-config.sh {}',$.ClusterId))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          ExternallyProvidedCertsReady?:
+            Type: Choice
+            Choices:
+              - And:
+                - Variable: $.ResourceProperties.UseExternalPkiProcess
+                  StringEquals: 'true'
+                - Variable: $.ResourceProperties.ExternallyProvidedCertsReady
+                  StringEquals: 'true'
+                Next: GetClusterState
+            Default: HsmsPerSubnetChanged?
+          GetClusterState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetClusterState}'
+            ResultPath: $.ClusterState
+            Next: ClusterActivated?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          ClusterActivated?:
+            Type: Choice
+            Choices:
+            - Variable: $.ClusterState
+              StringEquals: 'ACTIVE'
+              Next: HsmsPerSubnetChanged?
+            Default: InitActivateCluster
+          InitActivateCluster:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              StateMachineArn: !Ref rStateMachineInitActivateCluster
+              Input.$: $
+            ResultPath: $.Exec
+            Next: InitActivateClusterError?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          InitActivateClusterError?:
+            Type: Choice
+            Choices:
+            - Variable: $.Exec.Output.Cause
+              IsPresent: true
+              Next: PrepareExecError
+            Default: AlignHsmCount 
+          HsmsPerSubnetChanged?:
+            Type: Choice
+            Choices:
+            - Variable: $.ResourceProperties.HsmsPerSubnet
+              StringEqualsPath: $.OldResourceProperties.HsmsPerSubnet
+              Next: ClientPkgChanged?
+            Default: GetHsmsState
+          # When update fails to create some HSMs (for example, due to quotas), creation of some HSMs 
+          # may still be in progress. Wait for HSMs that are still being created to transition to the active
+          # state prior to attempting to delete the HSMs.
+          GetHsmsState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetHsmsState}'
+            ResultPath: $.HsmsState
+            Next: HsmsActive?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          HsmsActive?:
+            Type: Choice
+            Choices:
+            - Variable: $.HsmsState
+              StringEquals: 'ACTIVE'
+              Next: AlignHsmCount
+            Default: WaitForHsmsActive 
+          WaitForHsmsActive:
+            Type: Wait
+            Seconds: 30
+            Next: GetHsmsState 
+          AlignHsmCount:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              StateMachineArn: !Ref rStateMachineAlignHsms
+              Input.$: $
+            ResultPath: $.Exec
+            Next: AlignHsmCountError?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          AlignHsmCountError?:
+            Type: Choice
+            Choices:
+            - Variable: $.Exec.Output.Cause
+              IsPresent: true
+              Next: PrepareExecError
+            Default: ClientPkgChanged? 
+          ClientPkgChanged?:
+            Type: Choice
+            Choices:
+              - And:
+                - Variable: $.ResourceProperties.ClientPkg
+                  StringEqualsPath: $.OldResourceProperties.ClientPkg
+                - Variable: $.ResourceProperties.ClientInstanceId
+                  StringEqualsPath: $.OldResourceProperties.ClientInstanceId
+                Next: SendCfnSuccess
+            Default: InstallClientPkg?
+          InstallClientPkg?:
+            Type: Choice
+            Choices:
+            - Variable: $.ResourceProperties.ClientPkg
+              StringEquals: 'cloudhsm-client'
+              Next: InstallClientPkg
+            Default: InstallCliPkg
+          InstallClientPkg:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.InstallClientPkg
+            Next: SendCfnSuccess
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('sudo /root/cloudhsm-work/cloudhsm-client-install.sh;sudo /root/cloudhsm-work/cloudhsm-update-config.sh {}',$.ClusterId))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          InstallCliPkg:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.InstallCliPkg
+            Next: SendCfnSuccess
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('sudo /root/cloudhsm-work/cloudhsm-cli-install.sh; sudo /root/cloudhsm-work/cloudhsm-update-config.sh {}',$.ClusterId))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          SendCfnSuccess:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnSuccess}'
+            End: true
+          PrepareExecError:
+            Type: Pass
+            Parameters:
+              Cause.$: $.Exec.Output.Cause
+            ResultPath: $.Error
+            Next: SendCfnFailed
+          SendCfnFailed:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnFailed}'
+            End: true
+
+  rCloudWatchLogsStateMachineUpdate:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/update'
+      RetentionInDays: 30
+
+  rStateMachineUpdateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-update'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt rLambdaGetClusterState.Arn
+                  - !GetAtt rLambdaGetHsmsState.Arn
+                  - !GetAtt rLambdaSendCfnSuccess.Arn
+                  - !GetAtt rLambdaSendCfnFailed.Arn
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rStateMachineInitActivateCluster
+                  - !Ref rStateMachineAlignHsms
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution
+                  - states:StopExecution
+                Resource:
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${rStateMachineInitActivateCluster.Name}'
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${rStateMachineAlignHsms.Name}'
+              - Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: 
+                 - !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule'
+              - Effect: Allow
+                Action:
+                  - ssm:StartAutomationExecution
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${rRunCmdStepFunctionsDocument}:$DEFAULT'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rStateMachineDelete:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-delete'
+      RoleArn: !GetAtt rStateMachineDeleteExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineDelete.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Deletes HSMs from the CloudHSM cluster and deletes the cluster
+        StartAt: ClusterExists?
+        States:
+          # Guard against situations in which either a cluster hasn't been created or
+          # an error was uncaught during creation and CloudFormation was not provided
+          # with a PhysicalResourceId. i.e. rLambdaSendCfnFailed was not executed. 
+          # In that case, CloudFormation will set PhysicalResourceId to a value based
+          # on the <stack name>-rCloudHsmCluster-...
+          ClusterExists?:
+            Type: Choice
+            Choices:
+            - Variable: $.ClusterId
+              StringMatches: cluster-*
+              Next: GetHsmsState
+            Default: SendCfnSuccess
+          # When stack creation fails, creation of HSMs could still be in progress.
+          # Wait for HSMs that are still being created to transition to the active
+          # state prior to deleting the HSMs.
+          GetHsmsState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetHsmsState}'
+            ResultPath: $.HsmsState
+            Next: HsmsActive?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          HsmsActive?:
+            Type: Choice
+            Choices:
+            - Variable: $.HsmsState
+              StringEquals: 'ACTIVE'
+              Next: DeleteHsms
+            Default: WaitForHsmsActive 
+          WaitForHsmsActive:
+            Type: Wait
+            Seconds: 30
+            Next: GetHsmsState      
+          DeleteHsms:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDeleteHsms}'
+            Next: WaitForHsmsDelete
+            ResultPath: $.HsmIds
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          WaitForHsmsDelete:
+            Type: Wait
+            Seconds: 30
+            Next: GetHsmsState2
+          GetHsmsState2:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetHsmState}'
+            Next: HsmsDeleted?
+            ResultPath: $.HsmsState
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          HsmsDeleted?:
+            Type: Choice
+            Choices:
+            - Variable: $.HsmsState
+              StringEquals: 'DELETED'
+              Next: DeleteSecrets
+            Default: WaitForHsmsDelete
+          DeleteSecrets:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDeleteSecrets}'
+            Next: DeleteCluster
+            ResultPath: $.DeleteSecrets
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          DeleteCluster:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaDeleteCluster}'
+            Next: WaitForClusterDelete
+            ResultPath: $.DeleteCluster
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          WaitForClusterDelete:
+            Type: Wait
+            Seconds: 30
+            Next: GetClusterState
+          GetClusterState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetClusterState}'
+            Next: ClusterDeleted?
+            ResultPath: $.ClusterState
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          ClusterDeleted?:
+            Type: Choice
+            Choices:
+            - Variable: $.ClusterState
+              StringEquals: 'DELETED'
+              Next: SendCfnSuccess
+            Default: WaitForClusterDelete
+          SendCfnSuccess:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnSuccess}'
+            End: true
+          SendCfnFailed:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaSendCfnFailed}'
+            End: true
+
+  rCloudWatchLogsStateMachineDelete:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/delete'
+      RetentionInDays: 30
+
+  rStateMachineDeleteExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-delete'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt rLambdaGetHsmsState.Arn
+                  - !GetAtt rLambdaDeleteHsms.Arn
+                  - !GetAtt rLambdaGetHsmState.Arn
+                  - !GetAtt rLambdaDeleteSecrets.Arn
+                  - !GetAtt rLambdaDeleteCluster.Arn
+                  - !GetAtt rLambdaGetClusterState.Arn
+                  - !GetAtt rLambdaSendCfnSuccess.Arn
+                  - !GetAtt rLambdaSendCfnFailed.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rStateMachineInitActivateCluster:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-init-activate-cluster'
+      RoleArn: !GetAtt rStateMachineInitActivateExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineInitActivate.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Completes creation of CloudHSM cluster after signed cluster cert is available
+        StartAt: UpdateEc2ClientConfig
+        States:
+          UpdateEc2ClientConfig:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.UpdateEc2ClientConfig
+            Next: GetClusterState
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('sudo /root/cloudhsm-work/cloudhsm-update-config.sh {}',$.ClusterId))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          GetClusterState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetClusterState}'
+            ResultPath: $.ClusterState
+            Next: ClusterActivated?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          ClusterActivated?:
+            Type: Choice
+            Choices:
+            - Variable: $.ClusterState
+              StringEquals: 'ACTIVE'
+              Next: Complete
+            Default: InitCluster
+          InitCluster:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaInitCluster}'
+            ResultPath: $.InitCluster
+            Next: WaitForClusterInit
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          WaitForClusterInit:
+            Type: Wait
+            Seconds: 30
+            Next: GetClusterState2
+          GetClusterState2:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetClusterState}'
+            ResultPath: $.ClusterState
+            Next: ClusterInitialized?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          ClusterInitialized?:
+            Type: Choice
+            Choices:
+            - Variable: $.ClusterState
+              StringEquals: 'INITIALIZED'
+              Next: ActivateCluster
+            Default: WaitForClusterInit
+          ActivateCluster:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.ActivateCluster
+            Next: WaitForClusterActive
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('sudo /root/cloudhsm-work/activate-cluster.sh {}',$.ClusterId))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          WaitForClusterActive:
+            Type: Wait
+            Seconds: 30
+            Next: GetClusterState3
+          GetClusterState3:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetClusterState}'
+            ResultPath: $.ClusterState
+            Next: ClusterActive2?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          ClusterActive2?:
+            Type: Choice
+            Choices:
+            - Variable: $.ClusterState
+              StringEquals: 'ACTIVE'
+              Next: Complete
+            Default: WaitForClusterActive
+          Complete:
+            Type: Succeed
+
+  rCloudWatchLogsStateMachineInitActivate:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/init-activate'
+      RetentionInDays: 30
+
+  rStateMachineInitActivateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-init-activate'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt rLambdaGetClusterState.Arn
+                  - !GetAtt rLambdaInitCluster.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:StartAutomationExecution
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${rRunCmdStepFunctionsDocument}:$DEFAULT'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rStateMachineAlignHsms:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${pSystem}-${pEnvPurpose}-align-hsms'
+      RoleArn: !GetAtt rStateMachineAlignHsmsExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rCloudWatchLogsStateMachineAlignHsms.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: Align number of HSMs with desired number
+        StartAt: AlignHsmCount
+        States:
+          AlignHsmCount:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaAlignHsmCount}'
+            ResultPath: $.AlignHsmCount
+            Next: WaitForHsmsAligned
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          WaitForHsmsAligned:
+            Type: Wait
+            Seconds: 30
+            Next: GetHsmsState
+          GetHsmsState:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetHsmsState}'
+            ResultPath: $.HsmsState
+            Next: HsmsAligned?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          HsmsAligned?:
+            Type: Choice
+            Choices:
+            - Variable: $.HsmsState
+              StringEquals: 'ACTIVE'
+              Next: UpdateEc2ClientConfig
+            Default: WaitForHsmsAligned
+          UpdateEc2ClientConfig:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:startAutomationExecution.waitForTaskToken
+            ResultPath: $.UpdateEc2ClientConfig
+            Next: Complete
+            Parameters:
+              DocumentName: !Ref rRunCmdStepFunctionsDocument
+              Parameters:
+                InstanceIds.$: States.Array($.ResourceProperties.ClientInstanceId)
+                taskToken.$: States.Array($$.Task.Token)
+                Commands.$: States.Array(States.Format('sudo /root/cloudhsm-work/cloudhsm-update-config.sh {}',$.ClusterId))
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $
+              Next: Complete
+          Complete:
+            Type: Succeed
+
+  rCloudWatchLogsStateMachineAlignHsms:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${pSystem}-${pEnvPurpose}/align-hsms'
+      RetentionInDays: 30
+
+  rStateMachineAlignHsmsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-states-align-hsms'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt rLambdaAlignHsmCount.Arn
+                  - !GetAtt rLambdaGetHsmsState.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:StartAutomationExecution
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${rRunCmdStepFunctionsDocument}:$DEFAULT'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogStream
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaCreateCluster:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-create-cluster' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaCreateClusterRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            subnets = event['ResourceProperties']['Subnets']
+            backup_id = event['ResourceProperties']['BackupId']
+            backup_retention_days = event['ResourceProperties']['BackupRetentionDays']
+
+            backup_retention_policy = {'Type': 'DAYS', 'Value': backup_retention_days}
+            args = { 'SubnetIds': subnets, 'HsmType': event['ResourceProperties']['HsmType'], 'BackupRetentionPolicy': backup_retention_policy }
+
+            if backup_id:
+              args['SourceBackupId'] = backup_id
+
+            try:
+              cluster = cloudhsm.create_cluster(**args)
+              logger.info(json.dumps(cluster["Cluster"], indent=2, default=str))
+            except botocore.exceptions.ClientError as error:
+              logger.error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+
+            return cluster['Cluster']['ClusterId']
+
+  rLambdaCreateClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-create'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:CreateCluster
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              # See example: https://docs.aws.amazon.com/IAM/latest/UserGuide/using-service-linked-roles.html#service-linked-role-permissions
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: 'arn:aws:iam::*:role/aws-service-role/cloudhsm.amazonaws.com/AWSServiceRoleForCloudHSM'
+                Condition:
+                  'StringLike':
+                    'iam:AWSServiceName': 'cloudhsm.amazonaws.com'
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:CreateSecurityGroup
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:DeleteSecurityGroup
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaGetClusterState:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-cluster'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaGetClusterStateRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+            
+            if event['RequestType'] == 'Create':
+              cluster_id = event['ClusterId']
+              state = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})['Clusters'][0]['State']
+              return state
+            elif event['RequestType'] == 'Update':
+              cluster_id = event['ClusterId']
+              state = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})['Clusters'][0]['State']
+              return state
+            elif event['RequestType'] == 'Delete':
+              cluster_id = event['PhysicalResourceId']
+              logger.info(f'Finding state for cluster: {str(cluster_id)}')
+              cluster = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})
+              if not cluster['Clusters']:
+                return 'DELETED'
+              else:
+                return cluster['Clusters'][0]['State']
+
+  rLambdaGetClusterStateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-get-state'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaInitializeSecrets:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-init-secrets'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaInitializeSecretsRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          sm = boto3.client('secretsmanager')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            cluster_id = event['ClusterId']
+            system_id = event['ResourceProperties']['SystemId']
+
+            secrets_prefix = f'/{system_id}/{cluster_id}/'
+
+            cluster_csr_secret_id = f'{secrets_prefix}cluster-csr'
+            response = sm.create_secret(
+              Name=cluster_csr_secret_id,
+              Description='Cluster CSR',
+              SecretString='placeholder')
+
+            cluster_cert_secret_id = f'{secrets_prefix}cluster-cert'
+            sm.create_secret(
+              Name=cluster_cert_secret_id,
+              Description='Cluster cert',
+              SecretString='placeholder')
+
+            customer_ca_cert_secret_id = f'{secrets_prefix}customer-ca-cert'
+            sm.create_secret(
+              Name=customer_ca_cert_secret_id,
+              Description='Customer CA cert',
+              SecretString='placeholder')
+
+            sm_response = sm.get_random_password(PasswordLength=10,ExcludePunctuation=True)
+            password = sm_response['RandomPassword']
+            secret_string = {'username': 'admin', 'password': password}
+
+            hsm_crypto_officer_password_secret_id = f'{secrets_prefix}initial-crypto-officer-password'
+            sm.create_secret(
+              Name=hsm_crypto_officer_password_secret_id,
+              Description='Initial password for the Crypto Officer (CO) user',
+              SecretString=json.dumps(secret_string))
+
+            return
+
+  rLambdaInitializeSecretsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-init-secrets'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetRandomPassword
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaCreateHsm:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-create-hsm' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaCreateHsmRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+          
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+            cluster_id = event['ClusterId']
+            az_names= []
+
+            subnet_mapping = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})['Clusters'][0]['SubnetMapping']
+            for az in subnet_mapping:
+              az_names.append(az)
+
+            logger.info(f'Cluster {str(cluster_id)} subnets represents these AZs: {str(az_names)}')
+
+            try:
+              hsm_device = cloudhsm.create_hsm(ClusterId=cluster_id,AvailabilityZone=az_names[0])
+            except botocore.exceptions.ClientError as error:
+              logger.error(f'{error.response["Error"]["Code"]}: {error.response["Error"]["Message"]}')
+              raise error
+
+            logger.info(hsm_device)
+            
+            return hsm_device['Hsm']['HsmId']
+
+  rLambdaCreateHsmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-create-hsm'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                  - cloudhsm:CreateHsm
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSecurityGroups
+                  - ec2:CreateSecurityGroup
+                  - ec2:DescribeSubnets
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaGetHsmState:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-hsm' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaGetHsmStateRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+            states = dict()
+            if event['RequestType'] == 'Create':
+              cluster_id = event['ClusterId']
+              hsm = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})['Clusters'][0]['Hsms'][0]
+              logger.info(json.dumps(hsm, indent=2, default=str))
+              logger.info(hsm['State'])
+              return hsm['State']
+            elif event['RequestType'] == 'Delete':
+              cluster_id = event['PhysicalResourceId']
+              cluster = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})
+              logger.info(cluster)
+              if not cluster['Clusters'][0]['Hsms']:
+                return 'DELETED'
+              else:
+                for hsm in cluster['Clusters'][0]['Hsms']:
+                  states[hsm['HsmId']] = hsm['State']
+                return states
+
+  rLambdaGetHsmStateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-get-hsm'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaUpdateClusterSecGroup:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-update-sec-group'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaUpdateClusterSecGroupRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          ec2 = boto3.client('ec2')
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            client_instance_id = event['ResourceProperties']['ClientInstanceId']
+            cluster_id = event['ClusterId']
+
+            ec2_sec_group_id = ec2.describe_instances(InstanceIds = [client_instance_id])['Reservations'][0]['Instances'][0]['SecurityGroups'][0]['GroupId']
+            logger.info(f'EC2 client instance sec group ID: {ec2_sec_group_id}')
+
+            cluster_sec_group = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})['Clusters'][0]['SecurityGroup']
+            logger.info(f'HSM cluster sec group ID: {cluster_sec_group}')
+
+            ec2_resp = ec2.describe_security_groups (
+              GroupIds = [cluster_sec_group],
+              Filters = [{'Name': 'ip-permission.group-id', 'Values': [ec2_sec_group_id]}])
+            logger.info(ec2_resp)
+              
+            if ec2_resp['SecurityGroups']:
+              logger.info('EC2 client sec group already present in cluster sec group')
+              return
+
+            ec2_resp = ec2.authorize_security_group_ingress (
+              GroupId=cluster_sec_group, 
+              IpPermissions=[{
+                'FromPort': 2223,
+                 'ToPort': 2225,
+                'IpProtocol': 'tcp',
+                'UserIdGroupPairs': [{'GroupId': ec2_sec_group_id}]
+              }])
+            logger.info(ec2_resp)
+
+            return
+
+  rLambdaUpdateClusterSecGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-update-sec-group'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeSecurityGroups
+                  - ec2:AuthorizeSecurityGroupIngress
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaRetrievePriorCaCert:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-retrieve-ca-cert'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaRetrievePriorCaCertRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+          sm = boto3.client('secretsmanager')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            cluster_id = event['ClusterId']
+            backup_id = event['ResourceProperties']['BackupId']
+            system_id = event['ResourceProperties']['SystemId']
+
+            cluster_resp = cloudhsm.describe_backups(Filters={'backupIds': [backup_id]})
+            backup_cluster_id = cluster_resp['Backups'][0]['ClusterId']
+
+            backup_secret_id = f'/{system_id}/{backup_cluster_id}/customer-ca-cert'
+            secret_value = sm.get_secret_value(SecretId=backup_secret_id)
+            orig_cust_ca_cert = secret_value['SecretString']
+            logger.info(f'Original customer CA cert: \n {orig_cust_ca_cert}')
+                
+            new_secret_id = f'/{system_id}/{cluster_id}/customer-ca-cert'
+
+            sm.create_secret(
+              Name=new_secret_id,
+              Description='Customer CA cert',
+              SecretString=orig_cust_ca_cert)
+
+            return
+
+  rLambdaRetrievePriorCaCertRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-retrieve-cert'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeBackups
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:CreateSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/*'
+
+  rLambdaGetClusterCertCsr:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-csr'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaGetClusterCertCsrRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+          sm = boto3.client('secretsmanager')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            cluster_id = event['ClusterId']
+            system_id = event['ResourceProperties']['SystemId']
+
+            cluster_resp = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})
+            cluster_csr = cluster_resp['Clusters'][0]['Certificates']['ClusterCsr']
+            logger.info(f'cluster csr:\n{cluster_csr}')
+              
+            new_secret_id = f'/{system_id}/{cluster_id}/cluster-csr'
+            sm.put_secret_value(SecretId=new_secret_id,SecretString=cluster_csr)
+
+            return
+
+  rLambdaGetClusterCertCsrRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-get-csr'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:PutSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/*'
+
+  rLambdaInternallyIssueClusterCert:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-issue-cluster-cert'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 300
+      Role:    !GetAtt rLambdaInternallyIssueClusterCertRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+          import time
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          pca = boto3.client('acm-pca')
+          sm = boto3.client('secretsmanager')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            cluster_id = event['ClusterId']
+            system_id = event['ResourceProperties']['SystemId']
+            internal_root_ca_arn = event['ResourceProperties']['InternalRootCaArn']
+            internal_root_ca_cert_arn = event['ResourceProperties']['InternalRootCaCertArn']
+
+            secrets_prefix = f'/{system_id}/{cluster_id}/'
+
+            response = pca.get_certificate(CertificateAuthorityArn=internal_root_ca_arn,CertificateArn=internal_root_ca_cert_arn)
+            customer_ca_cert = response['Certificate']
+            ca_cert_id = f'{secrets_prefix}customer-ca-cert'
+            logger.info(f'placing secret into {ca_cert_id}')
+            sm.put_secret_value(SecretId=ca_cert_id,SecretString=customer_ca_cert)
+
+            csr_secret_id = f'{secrets_prefix}cluster-csr'
+            secret_value = sm.get_secret_value(SecretId=csr_secret_id)
+            csr = secret_value['SecretString']
+
+            # Ensure validity period of issued cert is less than the root CA certificate
+            response = pca.issue_certificate(
+              CertificateAuthorityArn=internal_root_ca_arn,
+              Csr=csr,
+              SigningAlgorithm='SHA256WITHRSA',
+              TemplateArn='arn:aws:acm-pca:::template/EndEntityCertificate/V1',
+              Validity={'Value': 3650, 'Type': 'DAYS'}
+            )
+            cluster_cert_arn = response['CertificateArn']
+
+            # Since issue_certificate() is an asynchronous operation, need to retry subsequent get operation
+            retries = 30
+            while retries:
+              retries -= 1
+              try:
+                logger.info('Attempting to get cluster cert after calling issue_certificate()')
+                response = pca.get_certificate(CertificateAuthorityArn=internal_root_ca_arn,CertificateArn=cluster_cert_arn)
+                break
+              except botocore.exceptions.ClientError as error:
+                if error.response['Error']['Code'] == 'RequestInProgressException':
+                  logger.info('Received RequestInProgressException when attempting get_certificate(). Waiting 5 seconds...')
+                  time.sleep(5)
+                else:
+                  raise error
+            else:
+              raise Exception('Retries exhausted when attempting get_certificate()')             
+
+            cluster_cert = response['Certificate']
+            cluster_cert_id = f'{secrets_prefix}cluster-cert'
+            sm.put_secret_value(SecretId=cluster_cert_id,SecretString=cluster_cert)
+
+            return
+
+  rLambdaInternallyIssueClusterCertRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-issue-cert'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - acm-pca:IssueCertificate
+                  - acm-pca:GetCertificate
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:PutSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/*'
+
+  rLambdaInitCluster:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-init-cluster'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaInitClusterRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+          sm = boto3.client('secretsmanager')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            cluster_id = event['ClusterId']
+            system_id = event['ResourceProperties']['SystemId']
+              
+            secrets_prefix = f'/{system_id}/{cluster_id}/'
+              
+            cluster_cert_secret_id = f'{secrets_prefix}cluster-cert'
+            secret_value = sm.get_secret_value(SecretId=cluster_cert_secret_id)
+            cluster_cert = secret_value['SecretString']
+
+            customer_ca_cert_secret_id = f'{secrets_prefix}customer-ca-cert'
+            secret_value = sm.get_secret_value(SecretId=customer_ca_cert_secret_id)
+            ca_cert = secret_value['SecretString']
+              
+            cloudhsm.initialize_cluster(ClusterId=cluster_id,SignedCert=cluster_cert,TrustAnchor=ca_cert)
+
+            return
+
+  rLambdaInitClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-init-cluster'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:InitializeCluster
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/*'
+
+  rLambdaAlignHsmCount:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-align-hsm-count' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaAlignHsmCountRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+          
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            cluster_id = event['ClusterId']
+            hsms_per_subnet_desired = int(event['ResourceProperties']['HsmsPerSubnet'])
+            cluster_info = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})
+
+            logger.info(f'Number of HSMs desired per subnet: {str(hsms_per_subnet_desired)}')
+  
+            subnet_mapping = cluster_info['Clusters'][0]['SubnetMapping']
+            logger.info('subnet_mapping:')
+            logger.info(subnet_mapping)
+            num_subnets = len(subnet_mapping)
+            logger.info(f'Number of subnets associated with cluster: {str(num_subnets)}')
+
+            num_hsms_in_subnets = {}
+            for hsm in cluster_info['Clusters'][0]['Hsms']:
+              if hsm['AvailabilityZone'] not in num_hsms_in_subnets.keys():
+                num_hsms_in_subnets[hsm['AvailabilityZone']] = 1
+              else:
+                num_hsms_in_subnets[hsm['AvailabilityZone']] += 1
+            
+            logger.info(f'num_hsms_in_subnets: {num_hsms_in_subnets}')
+
+            for key in subnet_mapping:
+              if key not in num_hsms_in_subnets.keys():
+                # HSMs not currently associated with this subnet
+                num_hsms_to_align = hsms_per_subnet_desired
+              else:
+                if num_hsms_in_subnets[key] == hsms_per_subnet_desired:
+                  logger.info('desired and current number of HSMs equal')
+                  num_hsms_to_align = 0
+                else:
+                  num_hsms_to_align = hsms_per_subnet_desired - num_hsms_in_subnets[key]
+    
+              logger.info('num_hsms_to_align:')
+              logger.info(num_hsms_to_align)
+    
+              if num_hsms_to_align > 0:
+                for i in range(num_hsms_to_align):
+                  logger.info(f'Creating HSM in subnet: {key}')
+                  cloudhsm.create_hsm(ClusterId=cluster_id,AvailabilityZone=key)
+              elif num_hsms_to_align < 0:
+                aligned = 0
+                for hsm in cluster_info['Clusters'][0]['Hsms']:
+                  logger.info(['AvailabilityZone'])
+                  if hsm['AvailabilityZone'] == key:
+                    logger.info(f'Deleting HSM: {hsm["HsmId"]} in subnet: {key}')
+                    cloudhsm.delete_hsm(ClusterId=cluster_id,HsmId=hsm['HsmId'])
+                    aligned += 1
+                    if aligned == abs(num_hsms_to_align):
+                      break
+
+  rLambdaAlignHsmCountRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-align-hsm-count'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                  - cloudhsm:CreateHsm
+                  - cloudhsm:DeleteHsm
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSecurityGroups
+                  - ec2:CreateSecurityGroup
+                  - ec2:DescribeSubnets
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaGetHsmsState:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-hsms' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaGetHsmsStateRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+            
+            cluster_id = event['ClusterId']
+            
+            cluster = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})
+            logger.info(cluster)
+
+            for hsm in cluster['Clusters'][0]['Hsms']:
+              if hsm['State'] != 'ACTIVE':
+                return 'NOTACTIVE'
+            
+            return 'ACTIVE'
+
+  rLambdaGetHsmsStateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-get-hsms'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaDeleteSecrets:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-delete-secrets'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaDeleteSecretsRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          sm = boto3.client('secretsmanager')
+
+          def lambda_handler(event, context):
+
+            logger.info(json.dumps(event, indent=2, default=str))
+            cluster_id = event['PhysicalResourceId']
+            system_id = event['ResourceProperties']['SystemId']
+
+            secrets_prefix = f'/{system_id}/{cluster_id}/'
+
+            for secret in ['cluster-csr', 'cluster-cert', 'initial-crypto-officer-password']:
+              logger.info(f'Obtaining ARN for secret: {secrets_prefix}{secret}')
+              response = sm.list_secrets(Filters=[{'Key': 'name', 'Values': [ secrets_prefix + secret ] } ])
+              if response['SecretList']:
+                arn = response['SecretList'][0]['ARN']
+                logger.info(f'Deleting secret: {arn}')
+                sm.delete_secret(
+                  SecretId=arn,
+                  ForceDeleteWithoutRecovery=True
+                )
+            
+            return
+
+  rLambdaDeleteSecretsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-delete-secrets'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:DeleteSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:ListSecrets
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaDeleteCluster:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-delete-cluster'
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaDeleteClusterRole.Arn  
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+
+            cluster_id = event['PhysicalResourceId']
+            logger.info(f'Deleting cluster: {str(cluster_id)}')
+
+            cloudhsm.delete_cluster(ClusterId=cluster_id)
+            
+            return {'Deleting': cluster_id}
+
+  rLambdaDeleteClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-delete-cluster'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DeleteCluster
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DeleteSecurityGroup
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaDeleteHsms:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-delete-hsms' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaDeleteHsmsRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          import time
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+              logger.info(json.dumps(event, indent=2, default=str))
+              
+              cluster_id = event['PhysicalResourceId']
+              cluster_info = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})
+              logger.info(cluster_info)
+
+              hsms = []
+              
+              for hsm in cluster_info['Clusters'][0]['Hsms']:
+                logger.info(f'HSM {hsm["HsmId"]} is in state {hsm["State"]}')
+                
+                hsms.append(hsm['HsmId'])
+
+                if hsm['State'] == 'ACTIVE' or hsm['State'] == 'DEGRADED':
+                  logger.info(f'Deleting HSM {hsm["HsmId"]}')
+                  cloudhsm.delete_hsm(ClusterId=cluster_id,HsmId=hsm['HsmId']) 
+                else:
+                  error = f'Unexpected HSM state {hsm["State"]} for HSM {hsm["HsmId"]}'
+                  raise Exception(error)   
+
+              return {'Deleting': hsms}
+
+  rLambdaDeleteHsmsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-delete-hsms'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                  - cloudhsm:DeleteHsm
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSecurityGroups
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaSendCfnFailed:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-send-cfn-failed' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaSendCfnFailedRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              logger.info(json.dumps(event, indent=2, default=str))
+
+              if 'ClusterId' in event:
+                physical_resource_id = event['ClusterId']
+              else:
+                physical_resource_id = 'rCloudHsmCluster'
+
+              response_data = {}
+
+              try:
+                reason_json = json.loads(event['Error']['Cause'])
+                reason = reason_json['errorMessage']
+              except:
+                reason = event['Error'].get('Cause')
+                if not reason: 
+                  reason = json.dumps(event['Error'],indent=2,default=str)
+              
+              cfnresponse.send(event, context, cfnresponse.FAILED, response_data, physical_resource_id, False, reason)
+
+              return
+
+  rLambdaSendCfnFailedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-send-cfn-failed'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+
+  rLambdaSendCfnSuccess:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-send-cfn-success' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaSendCfnSuccessRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          from botocore.vendored import requests
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+            
+            if event['RequestType'] == 'Create':
+              physical_resource_id = event['ClusterId']
+            else:
+              physical_resource_id = event['PhysicalResourceId']
+            
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {'cluster_id': physical_resource_id}, physical_resource_id)
+
+            return
+
+  rLambdaSendCfnSuccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-send-cfn-success'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+
+  rClientInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${pSystem}-${pEnvPurpose}-client'
+      GroupDescription: Client Instance Security Group
+      VpcId: !Ref pClientVpcId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          Description: HTTPS outbound
+          FromPort: 443
+          ToPort: 443
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          Description: Access to HSM
+          FromPort: 2223
+          ToPort: 2225
+
+  rClientInstance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT1H
+    Properties:
+      InstanceType: !Ref pClientType
+      ImageId: !If [ cUseAmiId, !Ref pClientAmiId, !Ref pClientAmiSsmParameter ]
+      IamInstanceProfile: !Ref rClientInstanceProfile
+      SubnetId: !Ref pClientSubnet
+      SecurityGroupIds: [
+        !Ref rClientInstanceSecurityGroup
+      ]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            Encrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${pSystem}-${pEnvPurpose}-client'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -x
+
+          yum update -y aws-cfn-bootstrap
+
+          /opt/aws/bin/cfn-init \
+              --verbose \
+              --stack ${AWS::StackName} \
+              --resource rClientInstance \
+              --configsets default \
+              --region ${AWS::Region}
+
+          /opt/aws/bin/cfn-signal \
+              --exit-code $? \
+              --stack ${AWS::StackName} \
+              --resource rClientInstance \
+              --region ${AWS::Region}
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+            - 01-config-cloudwatch-agent
+            - 02-install-aws-cli
+            - 03-install-cloudhsm-cli
+            - 04-create-activate-cluster-script
+            - 05-create-cloudhsm-client-install-script
+            - 06-create-cloudhsm-config-script
+
+        01-config-cloudwatch-agent:
+          packages:
+            yum:
+              amazon-cloudwatch-agent: []
+          files:
+            /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json:
+              content: !Sub |
+                {
+                  "logs": {
+                    "logs_collected": {
+                      "files": {
+                        "collect_list": [
+                          {
+                            "file_path": "/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/amazon-cloudwatch-agent.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/messages",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/messages",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cloud-init.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cloud-init.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cloud-init-output.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cloud-init-output.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cfn-init.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cfn-init.log",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/cfn-wire.log",
+                            "log_group_name": "${rCloudWatchLogsAgentGroup}",
+                            "log_stream_name": "{instance_id}/cfn-wire.log",
+                            "timezone": "UTC"
+                          }
+                        ]
+                      }
+                    },
+                    "log_stream_name": "${rCloudWatchLogsAgentGroup}",
+                    "force_flush_interval" : 15
+                  }
+                }
+              mode: '000444'
+              owner: root
+              group: root
+          commands:
+            01-stop-service:
+              command: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a stop
+            02-start-service:
+              command: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+        02-install-aws-cli:
+          packages:
+            yum:
+              expect: []
+              jq: []
+          commands:
+            01-yum-update:
+              command: /usr/bin/yum update -y
+            02-make-work-dir:
+              command: /usr/bin/mkdir -p /root/cloudhsm-work
+            03-install-awscli-v2:
+              command: >-
+                /usr/bin/curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" &&
+                /usr/bin/unzip awscliv2.zip &&
+                ./aws/install &&
+                /usr/bin/rm -f /bin/aws &&
+                /usr/bin/ln -s /usr/local/bin/aws /bin/aws &&
+                /usr/bin/rm -rf awscliv2.zip ./aws 
+        03-install-cloudhsm-cli:
+          files:
+            /root/cloudhsm-work/cloudhsm-cli-install.sh:
+              content: |
+                #!/bin/bash
+                
+                #set -x
+
+                # Remove cloudhsm-client package if it exists
+                /usr/bin/yum list cloudhsm-client
+                if [ $? -eq 0 ] ; then
+                  /usr/bin/yum remove -y cloudhsm-client
+                  
+                  # Workaround for an issue in which the cloudhsm-client leaves intact
+                  # group ownership of the former "hsmuser" ID on select directories.
+                  # This lingering group ownership is not corrected when installing cloudhsm-cli.
+                  # It causes a nuisance issue in that the cloudhsm-cli command will not be able
+                  # to write to the file /opt/cloudhsm/run/cloudhsm-cli.log.* and will instead
+                  # write to stdout and stderr.
+                  
+                  /usr/bin/rm -rf /opt/cloudhsm
+                fi
+
+                /usr/bin/yum list cloudhsm-cli
+                if [ $? -ne 0 ] ; then
+                  /usr/bin/wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-cli-latest.el7.x86_64.rpm
+                  /usr/bin/yum install -y ./cloudhsm-cli-latest.el7.x86_64.rpm
+                  /usr/bin/rm cloudhsm-cli-latest.el7.x86_64.rpm
+                fi
+              mode: '000700'
+              owner: root
+              group: root
+          commands:
+            01-install-cloudhsm-cli:
+              cwd: /root/cloudhsm-work
+              command: /root/cloudhsm-work/cloudhsm-cli-install.sh
+        04-create-activate-cluster-script:
+          files:
+            /root/cloudhsm-work/activate-cluster.sh:
+              content: !Sub |
+                #!/bin/bash
+                
+                #set -x
+
+                CLUSTER_ID="$1"
+                SYSTEM_ID=${pSystem}
+                REGION=${AWS::Region}
+
+                CO_PASSWORD_LOOKUP=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id "/${!SYSTEM_ID}/${!CLUSTER_ID}/initial-crypto-officer-password" --region $REGION 2>&1)
+                if [ $? -eq 0 ] ; then
+                  INITIAL_PASSWORD=$(/usr/bin/echo $CO_PASSWORD_LOOKUP | jq -r '.SecretString | fromjson.password')
+                else
+                  /usr/bin/echo "Failed to get initial CO password from Secrets Manager: ${!CO_PASSWORD_LOOKUP}"
+                  exit 1
+                fi
+
+                /opt/cloudhsm/bin/cloudhsm-cli cluster activate --password $INITIAL_PASSWORD
+                if [ $? -ne 0 ] ; then
+                  /usr/bin/echo "Failed to activate CloudHSM cluster"
+                  exit 1
+                fi
+              mode: '000700'
+              owner: root
+              group: root
+        05-create-cloudhsm-client-install-script:
+          files:
+            /root/cloudhsm-work/cloudhsm-client-install.sh:
+              content: |
+                #!/bin/bash
+                
+                #set -x
+                
+                # Remove newer package that conflicts with older package
+                /usr/bin/yum list cloudhsm-cli > /dev/null 2>&1
+                if [ $? -eq 0 ] ; then
+                  /usr/bin/yum remove -y cloudhsm-cli
+                fi
+
+                /usr/bin/yum list cloudhsm-client > /dev/null 2>&1
+                if [ $? -ne 0 ] ; then
+                  # Download and install latest v3
+                  /usr/bin/wget https://s3.amazonaws.com/cloudhsmv2-software/CloudHsmClient/EL7/cloudhsm-client-latest.el7.x86_64.rpm
+                  /usr/bin/yum install -y ./cloudhsm-client-latest.el7.x86_64.rpm
+                  /usr/bin/rm cloudhsm-client-latest.el7.x86_64.rpm
+                fi
+              mode: '000700'
+              owner: root
+              group: root
+        06-create-cloudhsm-config-script:
+          files:
+            /root/cloudhsm-work/cloudhsm-update-config.sh:
+              content: !Sub |
+                #!/bin/bash
+                
+                #set -x
+
+                CLUSTER_ID="$1"
+                SYSTEM_ID=${pSystem}
+                REGION=${AWS::Region}
+
+                CA_CERT_LOOKUP=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id "/${!SYSTEM_ID}/${!CLUSTER_ID}/customer-ca-cert" --region $REGION 2>&1)
+                if [ $? -eq 0 ] ; then
+                  CA_CERT=$(/usr/bin/echo $CA_CERT_LOOKUP | jq -r '.SecretString')
+                  /usr/bin/echo "$CA_CERT" | sed 's/- /-\n/g; s/ -/\n-/g' | sed '/CERTIFICATE/! s/ /\n/g' > /opt/cloudhsm/etc/customerCA.crt
+                else
+                  if [ ! -f "/opt/cloudhsm/etc/customerCA.crt" ]; then
+                    /usr/bin/echo "CA cert not found in Secrets Manager and not already present in /opt/cloudhsm/etc/customerCA.crt. Cannot configure client."
+                    exit 1
+                  fi
+                fi
+
+                /usr/bin/yum list cloudhsm-cli > /dev/null 2>&1
+                if [ $? -eq 0 ] ; then
+                  /opt/cloudhsm/bin/configure-cli --cluster-id $CLUSTER_ID
+                  if [ $? -ne 0 ] ; then
+                    /usr/bin/echo "Failed to configure CloudHSM CLI"
+                    exit 1
+                  fi
+                else
+                  /usr/bin/yum list cloudhsm-client > /dev/null 2>&1
+                  if [ $? -eq 0 ] ; then
+                    /usr/bin/systemctl enable cloudhsm-client.service > /dev/null 2>&1
+                    /usr/bin/systemctl start cloudhsm-client.service > /dev/null 2>&1
+                    /usr/bin/systemctl stop cloudhsm-client.service > /dev/null 2>&1
+                    HSM_IP_ADDR=$(/usr/local/bin/aws cloudhsmv2  describe-clusters --filters clusterIds=$CLUSTER_ID --query "Clusters[0].Hsms[0].EniIp" --output text --region $REGION)
+                    if [ $? -eq 0 ] ; then
+                      /opt/cloudhsm/bin/configure --cmu $HSM_IP_ADDR
+                      if [ $? -ne 0 ] ; then
+                        /usr/bin/echo "Failed to configure CloudHSM client"
+                        exit 1
+                      fi
+                      /usr/bin/systemctl start cloudhsm-client.service > /dev/null 2>&1
+                    else
+                      /usr/bin/echo "Failed to get HSM IP address. Cannot configure CloudHSM client: ${!HSM_IP_ADDR}"
+                      exit 1
+                    fi
+                  fi
+                fi              
+              mode: '000700'
+              owner: root
+              group: root
+
+  rCloudWatchLogsAgentGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/${pSystem}-${pEnvPurpose}/ec2-client'
+      RetentionInDays: 30
+
+  rClientInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-ec2-client'
+      MaxSessionDuration: 7200
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: SupportClusterActivation
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: 
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/${pSystem}/*'
+
+  rClientInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-ec2-client'
+      Path: /
+      Roles:
+        - !Ref rClientInstanceRole
+
+  rRunCmdStepFunctionsDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: !Sub '${pSystem}-${pEnvPurpose}-run-cmd-step-functions'
+      DocumentType: Automation
+      TargetType: '/AWS::EC2::Host'
+      Content:
+        schemaVersion: '0.3'
+        assumeRole: !GetAtt rRunCmdSsmRole.Arn
+        parameters:
+          InstanceIds:
+            type: StringList
+            description: "(Required) The IDs of the instances where you want to run
+              the command."
+          taskToken:
+            type: String
+            description: "(Required) Step Function task token for callback response."
+          Commands:
+            type: StringList
+            description: "(Required) Specify a shell script or a command to run."
+          workingDirectory:
+            type: String
+            default: '""'
+            description: "(Optional) The path to the working directory on your instance."
+          executionTimeout:
+            type: String
+            description: "(Optional) The time in seconds for a command to complete
+              before it is considered to have failed. Default is 3600 (1 hour). Maximum
+              is 172800 (48 hours)."
+            default: '3600'
+        mainSteps:
+        - name: RunCommand
+          action: aws:runCommand
+          inputs:
+            DocumentName: AWS-RunShellScript
+            Parameters:
+              commands: "{{Commands}}"
+              workingDirectory: "{{workingDirectory}}"
+              executionTimeout: "{{executionTimeout}}"
+            InstanceIds: "{{InstanceIds}}"
+            CloudWatchOutputConfig: 
+              CloudWatchOutputEnabled: true
+              CloudWatchLogGroupName: !Ref rCloudWatchLogsRunCommand
+          nextStep: SendTaskSuccess
+          onFailure: step:SendTaskFailure
+          onCancel: step:SendTaskFailure
+        - name: SendTaskSuccess
+          action: aws:executeAwsApi
+          inputs:
+            Service: stepfunctions
+            Api: send_task_success
+            taskToken: "{{taskToken}}"
+            output: "{}"
+          isEnd: true
+          timeoutSeconds: 50
+        - name: SendTaskFailure
+          action: aws:executeAwsApi
+          inputs:
+            Service: stepfunctions
+            Api: send_task_failure
+            taskToken: "{{taskToken}}"
+            error: "Automation document error on EC2 instance"
+            cause: "SSM aws:runCommand output: {{RunCommand.Output}}; Review logs for command ID: {{RunCommand.CommandId}}"
+          timeoutSeconds: 50
+
+  rCloudWatchLogsRunCommand:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/${pSystem}-${pEnvPurpose}/run-command'
+      RetentionInDays: 30
+
+  rRunCmdSsmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ssm.amazonaws.com
+          Action: sts:AssumeRole
+        Version: '2012-10-17'
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-ssm'
+      Policies:
+      - PolicyName: sync-run-shell-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ssm:DescribeInstanceInformation
+            Resource: '*'
+          - Effect: Allow
+            Action: ssm:SendCommand
+            Resource:
+              - !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${rClientInstance}'
+              - !Sub 'arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript'
+          - Effect: Allow
+            Action:
+              - ssm:ListCommands
+              - ssm:ListCommandInvocations
+            Resource:
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*'
+          - Effect: Allow
+            Action:
+              - states:SendTaskFailure
+              - states:SendTaskSuccess
+            Resource:
+              - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${pSystem}-${pEnvPurpose}-*'
+
+  rRootCa:
+    Type: AWS::ACMPCA::CertificateAuthority
+    Condition: cUseInternalPkiProcess
+    Properties:
+      Type: ROOT
+      KeyAlgorithm: RSA_4096
+      SigningAlgorithm: SHA256WITHRSA
+      Subject:
+        Country: US
+        Organization: CloudHSM
+        OrganizationalUnit: Example
+        State: !Sub '${AWS::Region}'
+        CommonName: !Sub '${pSystem}-${pEnvPurpose}'
+
+  rRootCaCert:
+    Type: AWS::ACMPCA::Certificate
+    Condition: cUseInternalPkiProcess
+    Properties:
+      CertificateAuthorityArn:
+        Ref: rRootCa
+      CertificateSigningRequest: !GetAtt rRootCa.CertificateSigningRequest
+      SigningAlgorithm: SHA256WITHRSA
+      TemplateArn: arn:aws:acm-pca:::template/RootCACertificate/V1
+      Validity:
+        Type: DAYS
+        Value: 3652
+
+  rRootCaActivation:
+    Type: AWS::ACMPCA::CertificateAuthorityActivation
+    Condition: cUseInternalPkiProcess
+    Properties:
+      CertificateAuthorityArn:
+        Ref: rRootCa
+      Certificate: !GetAtt rRootCaCert.Certificate
+      Status: ACTIVE
+
+Outputs:
+  oClusterInfo:
+    Description: The cluster_id value of the Cluster that has been set up
+    Value: !GetAtt rCloudHsmCluster.cluster_id
