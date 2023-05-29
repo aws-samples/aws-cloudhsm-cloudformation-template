@@ -33,6 +33,7 @@ Ensure that you test the template in multiple AWS Regions including `us-east-1` 
 * Change number of HSMs per subnet to 3
 * Vary the number of subnets
 * Use AMI ID instead of default AWS Systems Manager parameter store parameter
+* Validate that the `ClusterId` attribute is set properly.
 
 #### Select CloudHSM client or CLI package
 
@@ -68,7 +69,6 @@ Attempt to create a stack...
   * Specify a single subnet/AZ that is not supported.
   * Specify multiple subnets/AZs, but with only one that is not supported.
 * Test both automated rollbacks and preserve resources upon creation failure.
-
 
 In all failure scenarios, assess the extent to which resources are rolled back and a stack deletion causes deletion of resources.
 
@@ -116,6 +116,7 @@ Confirm that all resources have been deleted except for:
 * Decrease the number of HSMs per subnet.
 * Stop the EC2 client (do not terminate) prior to changing the number of HSMs per subnet.
 * Set the number of HSMs per subnet to 0.
+  * After successfully deleting all HSMs, apply another update with HSMs per subnet > 0.
 
 ### Updating the EC2 client subnet
 

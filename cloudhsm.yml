@@ -82,7 +82,7 @@ Parameters:
     Description: Number of HSMs per subnet to create in the CloudHSM cluster
     Type: Number
     Default: 1
-    MinValue: 1
+    MinValue: 0
 
   pHsmType:
     Description: Type of HSM to use in the cluster. Currently the only supported value is "hsm1.medium"
@@ -861,8 +861,25 @@ Resources:
             Choices:
             - Variable: $.ClusterId
               StringMatches: cluster-*
-              Next: GetHsmsState
+              Next: GetHsmNum
             Default: SendCfnSuccess
+          GetHsmNum:
+            Type: Task
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rLambdaGetHsmNum}'
+            ResultPath: $.HsmNum
+            Next: HsmsExist?
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.Error
+              Next: SendCfnFailed
+          HsmsExist?:
+            Type: Choice
+            Choices:
+            - Variable: $.HsmNum
+              NumericEquals: 0
+              Next: DeleteSecrets
+            Default: GetHsmsState 
           # When stack creation fails, creation of HSMs could still be in progress.
           # Wait for HSMs that are still being created to transition to the active
           # state prior to deleting the HSMs.
@@ -997,6 +1014,7 @@ Resources:
                   - lambda:InvokeFunction
                 Resource: 
                   - !GetAtt rLambdaGetHsmsState.Arn
+                  - !GetAtt rLambdaGetHsmNum.Arn
                   - !GetAtt rLambdaDeleteHsms.Arn
                   - !GetAtt rLambdaGetHsmState.Arn
                   - !GetAtt rLambdaDeleteSecrets.Arn
@@ -1337,6 +1355,10 @@ Resources:
 
           def lambda_handler(event, context):
             logger.info(json.dumps(event, indent=2, default=str))
+
+            hsms_per_subnet_desired = int(event['ResourceProperties']['HsmsPerSubnet'])
+            if hsms_per_subnet_desired == 0:
+              raise Exception('pHsmsPerSubnet must be greater than 0 when creating a cluster')  
 
             subnets = event['ResourceProperties']['Subnets']
             backup_id = event['ResourceProperties']['BackupId']
@@ -1724,6 +1746,68 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-get-hsm'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudHSMLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pSystem}-${pEnvPurpose}-*'
+              - Effect: Allow
+                Action:
+                  - cloudhsm:DescribeClusters
+                Resource: '*'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'aws:PrincipalAccount': !Sub '${AWS::AccountId}'
+                    'aws:RequestedRegion': !Sub '${AWS::Region}'
+
+  rLambdaGetHsmNum:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${pSystem}-${pEnvPurpose}-get-hsm-num' 
+      Handler: index.lambda_handler
+      Runtime: python3.10
+      Timeout: 20
+      Role:    !GetAtt rLambdaGetHsmNumRole.Arn 
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudhsm = boto3.client('cloudhsmv2')
+
+          def lambda_handler(event, context):
+            logger.info(json.dumps(event, indent=2, default=str))
+            
+            cluster_id = event['ClusterId']
+            hsms = cloudhsm.describe_clusters(Filters={'clusterIds': [cluster_id]})['Clusters'][0]['Hsms']
+            
+            return (len(hsms))
+
+  rLambdaGetHsmNumRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${pSystem}-${pEnvPurpose}-${AWS::Region}-svc-lambda-get-hsm-num'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -2735,7 +2819,7 @@ Resources:
             else:
               physical_resource_id = event['PhysicalResourceId']
             
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, {'cluster_id': physical_resource_id}, physical_resource_id)
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {'ClusterId': physical_resource_id}, physical_resource_id)
 
             return
 
@@ -3015,6 +3099,19 @@ Resources:
                 SYSTEM_ID=${pSystem}
                 REGION=${AWS::Region}
 
+                # Determine if at least 1 HSM exists. e.g. All HSMs may have been temporarily deleted from the cluster to reduce costs.
+                HSM_IP_ADDR=$(/usr/local/bin/aws cloudhsmv2  describe-clusters --filters clusterIds=$CLUSTER_ID --query "Clusters[0].Hsms[0].EniIp" --output text --region $REGION)
+                if [ $? -eq 0 ] ; then
+                  # If zero HSMs exist, then an IP address won't be returned
+                  if [ ${!HSM_IP_ADDR} = "None" ] ; then
+                    /usr/bin/echo "No HSMs exist. No need to update client configuration."
+                    exit 0
+                  fi
+                else
+                  /usr/bin/echo "Failed to get HSM IP address. Cannot configure CloudHSM client: ${!HSM_IP_ADDR}"
+                  exit 1
+                fi
+
                 CA_CERT_LOOKUP=$(/usr/local/bin/aws secretsmanager get-secret-value --secret-id "/${!SYSTEM_ID}/${!CLUSTER_ID}/customer-ca-cert" --region $REGION 2>&1)
                 if [ $? -eq 0 ] ; then
                   CA_CERT=$(/usr/bin/echo $CA_CERT_LOOKUP | jq -r '.SecretString')
@@ -3039,18 +3136,12 @@ Resources:
                     /usr/bin/systemctl enable cloudhsm-client.service > /dev/null 2>&1
                     /usr/bin/systemctl start cloudhsm-client.service > /dev/null 2>&1
                     /usr/bin/systemctl stop cloudhsm-client.service > /dev/null 2>&1
-                    HSM_IP_ADDR=$(/usr/local/bin/aws cloudhsmv2  describe-clusters --filters clusterIds=$CLUSTER_ID --query "Clusters[0].Hsms[0].EniIp" --output text --region $REGION)
-                    if [ $? -eq 0 ] ; then
-                      /opt/cloudhsm/bin/configure --cmu $HSM_IP_ADDR
-                      if [ $? -ne 0 ] ; then
-                        /usr/bin/echo "Failed to configure CloudHSM client"
-                        exit 1
-                      fi
-                      /usr/bin/systemctl start cloudhsm-client.service > /dev/null 2>&1
-                    else
-                      /usr/bin/echo "Failed to get HSM IP address. Cannot configure CloudHSM client: ${!HSM_IP_ADDR}"
+                    /opt/cloudhsm/bin/configure --cmu $HSM_IP_ADDR
+                    if [ $? -ne 0 ] ; then
+                      /usr/bin/echo "Failed to configure CloudHSM client"
                       exit 1
                     fi
+                    /usr/bin/systemctl start cloudhsm-client.service > /dev/null 2>&1
                   fi
                 fi              
               mode: '000700'
@@ -3253,6 +3344,6 @@ Resources:
       Status: ACTIVE
 
 Outputs:
-  oClusterInfo:
-    Description: The cluster_id value of the Cluster that has been set up
-    Value: !GetAtt rCloudHsmCluster.cluster_id
+  oClusterId:
+    Description: The cluster ID
+    Value: !Ref rCloudHsmCluster

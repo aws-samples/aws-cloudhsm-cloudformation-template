@@ -226,8 +226,8 @@ aws acm-pca get-certificate --certificate-authority-arn <CA arn> --certificate-a
 |---------|--------|-----------|-------|---------------------------|
 |`pSystem`|Optional|Used as a prefix in the names of many of the newly created cloud resources. You normally do not need to override the default value.|`cloudhsm`|No|
 |`pEnvPurpose`|Optional|Identifies the purpose for this particular instance of the stack. Used as part of the prefix in the names of many of the newly created resources. Enables you to create and more easily distinguish resources of multiple stacks in the same AWS account. For example, `1`, `2`, `test1`, `test2`, etc.|`1`|No|
-|`pSubnets`|Required|List of subnets to associate with the CloudHSM cluster. Subnets must exists within the same VPC. Only one subnet per availability zone (AZ) may be specified.<br><br>If you're using an AWS region that proivides access to more than 3 AZs, ensure that you supply subnet IDs associated with AZs in which CloudHSM is available. See [Determining regions and AZs in which CloudHSM is available](#determining-regions-and-azs-in-which-cloudhsm-is-available) for details.<br><br>Since CloudHSM does not support making changes to the  to the list of subnets after a cluster is created, this template does not support making changes to the list of subnets during stack updates.|None|No|
-|`pHsmsPerSubnet`|Optional|Number of HSMs to create per subnet.<br><br>If you intend to connect a KMS custom key store to the cluster, a minimum of 2 HSMs is required. In the simplest case, to support a KMS custom key store, you could specify one subnet in `pSubnets` and `2` for `pHsmsPerSubnet`.<br><br>See the [AWS CloudHSM Quotas](https://docs.aws.amazon.com/cloudhsm/latest/userguide/limits.html) for the maximum total HSMs you can create per cluster.<br><br>You can modify this parameter during a stack update to either grow or shrink the number of HSMs.|`1`|Yes|
+|`pSubnets`|Required|List of subnets to associate with the CloudHSM cluster. Subnets must exists within the same VPC. Only one subnet per availability zone (AZ) may be specified.<br><br>If you're using an AWS region that provides access to more than 3 AZs, ensure that you supply subnet IDs associated with AZs in which CloudHSM is available. See [Determining regions and AZs in which CloudHSM is available](#determining-regions-and-azs-in-which-cloudhsm-is-available) for details.<br><br>Since CloudHSM does not support making changes to the  to the list of subnets after a cluster is created, this template does not support making changes to the list of subnets during stack updates.|None|No|
+|`pHsmsPerSubnet`|Optional|Number of HSMs to create per subnet.<br><br>If you intend to connect a KMS custom key store to the cluster, a minimum of 2 HSMs is required. In the simplest case, to support a KMS custom key store, you could specify one subnet in `pSubnets` and `2` for `pHsmsPerSubnet`.<br><br>See the [AWS CloudHSM Quotas](https://docs.aws.amazon.com/cloudhsm/latest/userguide/limits.html) for the maximum total HSMs you can create per cluster.<br><br>You can modify this parameter during a stack update to either grow or shrink the number of HSMs.<br><br>During a stack update, you can specify `0` to delete all HSMs in the cluster without deleting the cluster. See [Saving costs by deleting HSMs](#saving-costs-by-deleting-hsms).|`1`|Yes|
 |`pHsmType`|Optional|The type of HSM to use in the cluster. Currently the only supported value is `hsm1.medium`|`hsm1.medium`|No|
 |`pUseExternalPkiProcess`|Optional|Select `true` if you want to use your own PKI process to issue a cluster certificate based on the CSR obtained from the cluster creation process. By default, the stack uses AWS Private CA to create a root CA and issue the cluster certificate. See [Determine whether or not you want to use your own PKI process for issuing the cluster certificate](#5-determine-whether-or-not-you-want-to-use-your-own-pki-process-for-issuing-the-cluster-certificate) to help you understand if this option applies to you.|`false`|Yes|
 |`pExternallyProvidedCertsReady`|Optional|Select `true` only if you selected `true` for `pUseExternalPkiProcess` and you've made the necessary certificates available per the process outlined in [Using your own PKI process](#using-your-own-pki-process). This parameter is only processed during stack update operations.<br><br>After you've successfully completed an update based on using your own PKI process, you may leave this parameter set to `true` for subsequent stack updates. The cluster and CA certificates will be processed only once.|`false`|Yes|
@@ -460,6 +460,28 @@ The CloudFormation template supports the ability to create a new CloudHSM cluste
 If you're creating a new cluster from a backup with which a KMS custom key store was previously connected, ensure that the backup you select contains the KMS key data that you require to be present in your newly created cluster.
 
 Since a CloudHSM backup retains the state of a cluster, creating a new cluster using a backup does not require initialization and activation of the newly created cluster. As part of the stack creation process and after the cluster is restored from the specified backup, the number of HSMs per subnet that you specified when creating the new stack will be created.
+
+### Saving costs by deleting HSMs
+
+If you have a non-production cluster that doesn't need to be used at all times, you can perform a stack update to delete all of the HSMs without deleting the cluster. Later, when you need to use the cluster, you can perform a stack update to recreate the number of HSMs of interest. By retaining the original cluster, you can avoid the process of creating a new cluster including issuing a cluster certificate.
+
+#### Delete all HSMs without deleting a cluster
+
+To delete all HSMs without deleting a cluster, set the `pHsmsPerSubnet` parameter to `0` during a stack update. 
+
+Since CloudHSM makes a backup of the cluster when an HSM is removed, you'll have an up-to-date cluster backup that will be used when you create new HSMs. See [Managing AWS CloudHSM backups](https://docs.aws.amazon.com/cloudhsm/latest/userguide/manage-backups.html.)
+
+#### Create HSMs in an empty cluster
+
+When you need to use the cluster again, during a stack update, you can set the `pHsmsPerSubnet` parameter to the desired number of HSMs.
+
+When the new HSMs are added to an CloudHSM cluster that doesn't have any HSMs, CloudHSM will use the most recent cluster backup as the basis for the newly created HSMs.
+
+#### Ensure application client configurations are updated
+
+Note that when you create HSMs, the IP addresses of the HSMs may be different from the original set of HSMs. Consequently, you'll need to ensure that application client configurations are updated to reference at least one of the newly created HSMs. See [Connect the client SDK to the AWS CloudHSM cluster](https://docs.aws.amazon.com/cloudhsm/latest/userguide/cluster-connect.html#connect-how-to) for information on configuring application clients to work with your cluster.
+
+The CloudFormation template automatically updates the EC2 client's configuration when HSMs are created and deleted.
 
 ## Deleting the stack
 
