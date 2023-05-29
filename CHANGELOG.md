@@ -1,6 +1,11 @@
 # CHANGELOG
 
-## May 2023
+## May 2023 - v2.1
+
+* Enable stack update to delete all HSMs yet retain the cluster. Set the `pHsmsPerSubnet` to `0` during a stack update to delete all HSMs. This technique can reduce costs of operating non-production clusters.
+* When deleting a stack, avoid waiting for the status of HSMs when no HSMs exist.
+
+## May 2023 - v2.0
 
 ### Overall enhancements
 
@@ -32,6 +37,6 @@ Error handling and reporting has been improved across all stack actions.
 * Updated all Lambda functions use Python 3.10.
 * Removed `vpc.yaml`. 
 
-## October 2021
+## October 2021 - v1.0
 
 Original version.

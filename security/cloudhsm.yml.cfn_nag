@@ -3,8 +3,8 @@ cloudhsm.yml
 ------------------------------------------------------------------------------------------------------------------------
 | WARN W11
 |
-| Resource: ["rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineInitActivateExecutionRole", "rStateMachineAlignHsmsExecutionRole", "rLambdaCreateClusterRole", "rLambdaGetClusterStateRole", "rLambdaInitializeSecretsRole", "rLambdaCreateHsmRole", "rLambdaGetHsmStateRole", "rLambdaUpdateClusterSecGroupRole", "rLambdaRetrievePriorCaCertRole", "rLambdaGetClusterCertCsrRole", "rLambdaInternallyIssueClusterCertRole", "rLambdaInitClusterRole", "rLambdaAlignHsmCountRole", "rLambdaGetHsmsStateRole", "rLambdaDeleteSecretsRole", "rLambdaDeleteClusterRole", "rLambdaDeleteHsmsRole", "rClientInstanceRole", "rRunCmdSsmRole"]
-| Line Numbers: [487, 770, 978, 1152, 1271, 1361, 1461, 1553, 1633, 1724, 1812, 1901, 1976, 2090, 2171, 2282, 2368, 2444, 2513, 2600, 3067, 3183]
+| Resource: ["rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineInitActivateExecutionRole", "rStateMachineAlignHsmsExecutionRole", "rLambdaCreateClusterRole", "rLambdaGetClusterStateRole", "rLambdaInitializeSecretsRole", "rLambdaCreateHsmRole", "rLambdaGetHsmStateRole", "rLambdaGetHsmNumRole", "rLambdaUpdateClusterSecGroupRole", "rLambdaRetrievePriorCaCertRole", "rLambdaGetClusterCertCsrRole", "rLambdaInternallyIssueClusterCertRole", "rLambdaInitClusterRole", "rLambdaAlignHsmCountRole", "rLambdaGetHsmsStateRole", "rLambdaDeleteSecretsRole", "rLambdaDeleteClusterRole", "rLambdaDeleteHsmsRole", "rClientInstanceRole", "rRunCmdSsmRole"]
+| Line Numbers: [487, 770, 995, 1170, 1289, 1383, 1483, 1575, 1655, 1746, 1808, 1896, 1985, 2060, 2174, 2255, 2366, 2452, 2528, 2597, 2684, 3158, 3274]
 |
 | IAM role should not allow * resource on its permissions policy
 
@@ -13,8 +13,8 @@ Notes: The * resource parameter is limited to the region and account of the prin
 ------------------------------------------------------------
 | WARN W89
 |
-| Resource: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterState", "rLambdaInitializeSecrets", "rLambdaCreateHsm", "rLambdaGetHsmState", "rLambdaUpdateClusterSecGroup", "rLambdaRetrievePriorCaCert", "rLambdaGetClusterCertCsr", "rLambdaInternallyIssueClusterCert", "rLambdaInitCluster", "rLambdaAlignHsmCount", "rLambdaGetHsmsState", "rLambdaDeleteSecrets", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
-| Line Numbers: [173, 1319, 1422, 1496, 1592, 1685, 1759, 1857, 1941, 2015, 2131, 2210, 2335, 2403, 2483, 2557, 2647, 2713]
+| Resource: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterState", "rLambdaInitializeSecrets", "rLambdaCreateHsm", "rLambdaGetHsmState", "rLambdaGetHsmNum", "rLambdaUpdateClusterSecGroup", "rLambdaRetrievePriorCaCert", "rLambdaGetClusterCertCsr", "rLambdaInternallyIssueClusterCert", "rLambdaInitCluster", "rLambdaAlignHsmCount", "rLambdaGetHsmsState", "rLambdaDeleteSecrets", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
+| Line Numbers: [173, 1337, 1444, 1518, 1614, 1707, 1781, 1843, 1941, 2025, 2099, 2215, 2294, 2419, 2487, 2567, 2641, 2731, 2797]
 |
 | Lambda functions should be deployed inside a VPC
 
@@ -23,8 +23,8 @@ Notes: The included Lambda functions only run during creating, updating, and del
 ------------------------------------------------------------
 | WARN W92
 |
-| Resource: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterState", "rLambdaInitializeSecrets", "rLambdaCreateHsm", "rLambdaGetHsmState", "rLambdaUpdateClusterSecGroup", "rLambdaRetrievePriorCaCert", "rLambdaGetClusterCertCsr", "rLambdaInternallyIssueClusterCert", "rLambdaInitCluster", "rLambdaAlignHsmCount", "rLambdaGetHsmsState", "rLambdaDeleteSecrets", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
-| Line Numbers: [173, 1319, 1422, 1496, 1592, 1685, 1759, 1857, 1941, 2015, 2131, 2210, 2335, 2403, 2483, 2557, 2647, 2713]
+| Resource: ["rCustomResourceCloudHsmCluster", "rLambdaCreateCluster", "rLambdaGetClusterState", "rLambdaInitializeSecrets", "rLambdaCreateHsm", "rLambdaGetHsmState", "rLambdaGetHsmNum", "rLambdaUpdateClusterSecGroup", "rLambdaRetrievePriorCaCert", "rLambdaGetClusterCertCsr", "rLambdaInternallyIssueClusterCert", "rLambdaInitCluster", "rLambdaAlignHsmCount", "rLambdaGetHsmsState", "rLambdaDeleteSecrets", "rLambdaDeleteCluster", "rLambdaDeleteHsms", "rLambdaSendCfnFailed", "rLambdaSendCfnSuccess"]
+| Line Numbers: [173, 1337, 1444, 1518, 1614, 1707, 1781, 1843, 1941, 2025, 2099, 2215, 2294, 2419, 2487, 2567, 2641, 2731, 2797]
 |
 | Lambda functions should define ReservedConcurrentExecutions to reserve simultaneous executions
 
@@ -34,7 +34,7 @@ Notes: The included Lambda functions do not need to run concurrently.
 | WARN W84
 |
 | Resource: ["rCloudWatchLogsStateMachineCreate", "rCloudWatchLogsStateMachineUpdate", "rCloudWatchLogsStateMachineDelete", "rCloudWatchLogsStateMachineInitActivate", "rCloudWatchLogsStateMachineAlignHsms", "rCloudWatchLogsAgentGroup", "rCloudWatchLogsRunCommand"]
-| Line Numbers: [481, 764, 972, 1146, 1265, 3061, 3177]
+| Line Numbers: [481, 764, 989, 1164, 1283, 3152, 3268]
 |
 | CloudWatchLogs LogGroup should specify a KMS Key Id to encrypt the log data
 
@@ -43,8 +43,8 @@ Notes: Password and other security sensitive information are not kept in the log
 ------------------------------------------------------------
 | WARN W28
 |
-| Resource: ["rClientInstanceSecurityGroup", "rLambdaCustomResourceExecutionRole", "rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineInitActivateExecutionRole", "rStateMachineAlignHsmsExecutionRole", "rLambdaCreateClusterRole", "rLambdaGetClusterStateRole", "rLambdaInitializeSecretsRole", "rLambdaCreateHsmRole", "rLambdaGetHsmStateRole", "rLambdaUpdateClusterSecGroupRole", "rLambdaRetrievePriorCaCertRole", "rLambdaGetClusterCertCsrRole", "rLambdaInternallyIssueClusterCertRole", "rLambdaInitClusterRole", "rLambdaAlignHsmCountRole", "rLambdaGetHsmsStateRole", "rLambdaDeleteSecretsRole", "rLambdaDeleteClusterRole", "rLambdaDeleteHsmsRole", "rLambdaSendCfnFailedRole", "rLambdaSendCfnSuccessRole", "rClientInstanceRole", "rRunCmdSsmRole"]
-| Line Numbers: [2770, 219, 487, 770, 978, 1152, 1271, 1361, 1461, 1553, 1633, 1724, 1812, 1901, 1976, 2090, 2171, 2282, 2368, 2444, 2513, 2600, 2686, 2743, 3067, 3183]
+| Resource: ["rClientInstanceSecurityGroup", "rLambdaCustomResourceExecutionRole", "rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole", "rStateMachineInitActivateExecutionRole", "rStateMachineAlignHsmsExecutionRole", "rLambdaCreateClusterRole", "rLambdaGetClusterStateRole", "rLambdaInitializeSecretsRole", "rLambdaCreateHsmRole", "rLambdaGetHsmStateRole", "rLambdaGetHsmNumRole", "rLambdaUpdateClusterSecGroupRole", "rLambdaRetrievePriorCaCertRole", "rLambdaGetClusterCertCsrRole", "rLambdaInternallyIssueClusterCertRole", "rLambdaInitClusterRole", "rLambdaAlignHsmCountRole", "rLambdaGetHsmsStateRole", "rLambdaDeleteSecretsRole", "rLambdaDeleteClusterRole", "rLambdaDeleteHsmsRole", "rLambdaSendCfnFailedRole", "rLambdaSendCfnSuccessRole", "rClientInstanceRole", "rRunCmdSsmRole"]
+| Line Numbers: [2854, 219, 487, 770, 995, 1170, 1289, 1383, 1483, 1575, 1655, 1746, 1808, 1896, 1985, 2060, 2174, 2255, 2366, 2452, 2528, 2597, 2684, 2770, 2827, 3158, 3274]
 |
 | Resource found with an explicit name, this disallows updates that require replacement of this resource
 
@@ -54,7 +54,7 @@ Notes: This CloudFormation template has been tested and this may change in the f
 | WARN W76
 |
 | Resource: ["rStateMachineCreateExecutionRole", "rStateMachineUpdateExecutionRole", "rStateMachineDeleteExecutionRole"]
-| Line Numbers: [487, 770, 978]
+| Line Numbers: [487, 770, 995]
 |
 | SPCM for IAM policy document is higher than 25
 
@@ -64,7 +64,7 @@ Notes: SPCM scoring is not a clear cut indication of whether or not the IAM poli
 | WARN W5
 |
 | Resource: ["rClientInstanceSecurityGroup"]
-| Line Numbers: [2770]
+| Line Numbers: [2854]
 |
 | Security Groups found with cidr open to world on egress
 
@@ -75,7 +75,7 @@ Notes: The CIDR range is open because this solution uses various package and art
 | WARN W29
 |
 | Resource: ["rClientInstanceSecurityGroup"]
-| Line Numbers: [2770]
+| Line Numbers: [2854]
 |
 | Security Groups found egress with port range instead of just a single port
 
@@ -84,4 +84,4 @@ Notes: The Egress port range (2223-2225) rule for rClientInstanceSecurityGroup i
        This has been reviewed and deemed an acceptable risk.
 
 Failures count: 0
-Warnings count: 96
+Warnings count: 100
