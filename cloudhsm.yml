@@ -142,6 +142,7 @@ Parameters:
   pClientAmiId:
     Description: ID for EC2 Amazon Machine Image (AMI) for the client instance (Optional. When specified, overrides SSM parameter)
     Type: String
+    Default: ''
 
 Conditions:
   cUseAmiId: !Not [!Equals [ !Ref 'pClientAmiId', '' ] ]
