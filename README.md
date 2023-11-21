@@ -263,8 +263,6 @@ Typically, creation of the stack will take ~10 to ~20 minutes depending on the n
 
 The general order in which cloud resources are created is as follows:
 
-The general order in which cloud resources are created is as follows:
-
 - IAM service role and EC2 instance profile for the EC2 client instance
 - EC2 client instance
 - An EC2 UserData script is used in conjunction with [`AWS::CloudFormation::Init`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-init.html) to bootstrap the CloudHSM client instance
