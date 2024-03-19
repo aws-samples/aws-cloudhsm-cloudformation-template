@@ -465,6 +465,15 @@ If you're creating a new cluster from a backup with which a KMS custom key store
 
 Since a CloudHSM backup retains the state of a cluster, creating a new cluster using a backup does not require initialization and activation of the newly created cluster. As part of the stack creation process and after the cluster is restored from the specified backup, the number of HSMs per subnet that you specified when creating the new stack will be created.
 
+Before deploying this solution you need first to create a Secrets Manager entry with the Customer CA Certificate of the backed-up CloudHSM cluster:
+Entry: /<pSystem>/<Source Cluster ID>/customer-ca-cert for backups accross regions and /<pSystem>/<Cluster ID>/customer-ca-cert for backups from the same region.
+Value: 
+-----BEGIN CERTIFICATE-----
+MIIFgjCCA2qgAwIBA...............................................
+................................................................
+................................................................
+-----END CERTIFICATE-----
+
 ### Saving costs by deleting HSMs
 
 If you have a non-production cluster that doesn't need to be used at all times, you can perform a stack update to delete all of the HSMs without deleting the cluster. Later, when you need to use the cluster, you can perform a stack update to recreate the number of HSMs of interest. By retaining the original cluster, you can avoid the process of creating a new cluster including issuing a cluster certificate.

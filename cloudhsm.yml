@@ -1965,7 +1965,11 @@ Resources:
             system_id = event['ResourceProperties']['SystemId']
 
             cluster_resp = cloudhsm.describe_backups(Filters={'backupIds': [backup_id]})
-            backup_cluster_id = cluster_resp['Backups'][0]['ClusterId']
+
+            try:
+              backup_cluster_id = cluster_resp['Backups'][0]['ClusterId']
+            except KeyError: 
+              backup_cluster_id = cluster_resp['Backups'][0]['SourceCluster']
 
             backup_secret_id = f'/{system_id}/{backup_cluster_id}/customer-ca-cert'
             secret_value = sm.get_secret_value(SecretId=backup_secret_id)
